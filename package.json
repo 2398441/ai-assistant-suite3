@@ -1,0 +1,15 @@
+{
+  "name": "ai-assistant-suite3",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently -n frontend,backend -c cyan,green \"npm run dev:frontend\" \"npm run dev:backend\"",
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev:backend": "cd backend && uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000",
+    "install:all": "npm install && cd frontend && npm install",
+    "install:backend": "cd backend && uv sync"
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.0"
+  }
+}

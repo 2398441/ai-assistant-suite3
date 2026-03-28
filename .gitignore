@@ -1,0 +1,30 @@
+# Python
+backend/.venv/
+backend/__pycache__/
+backend/**/__pycache__/
+backend/**/*.pyc
+backend/.env
+
+# Node / Next.js
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+node_modules/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+/tmp/*.log
+*.log
+logs/
+
+# Env files (keep .env.example)
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Runtime data (user sessions, history, tokens — never commit)
+backend/data/*.json
