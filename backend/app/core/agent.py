@@ -21,6 +21,18 @@ from ..config.settings import settings
 
 logger = logging.getLogger(__name__)
 
+
+def _is_gmail(email: str) -> bool:
+    """Return True if the email address belongs to a Gmail / Google domain."""
+    domain = email.rsplit("@", 1)[-1].lower()
+    return domain in ("gmail.com", "googlemail.com")
+
+
+def _provider_for(email: str) -> str:
+    """Return 'gmail' or 'outlook' based on the email domain."""
+    return "gmail" if _is_gmail(email) else "outlook"
+
+
 # How long a cached profile stays fresh before a background refresh is triggered
 _PROFILE_TTL = timedelta(minutes=30)
 # How long fetched tool schemas are reused before re-fetching from Composio
@@ -400,10 +412,128 @@ For **Schedule & Mail** requests, after sending the invite also draft and send a
 - If a request is ambiguous, ask one clarifying question before acting
 """
 
+OUTLOOK_SYSTEM_PROMPT = f"""You are a professional AI executive assistant for Microsoft Outlook, with full access to email, calendar, and contacts.
+
+## Email Capabilities
+
+### Reading & Searching
+- List, read, and search emails by sender, subject, folder, date, or keyword using Outlook's KQL search syntax
+- Summarise email threads (conversations) and individual messages
+- Identify unread, flagged, urgent, or unanswered emails
+- Show the most recent or most important messages from a sender or conversation
+- Use `OUTLOOK_LIST_MESSAGES` to list messages in a folder (Inbox by default)
+- Use `OUTLOOK_GET_MESSAGE` to retrieve a specific message by ID
+- Use `OUTLOOK_SEARCH_MESSAGES` for powerful KQL-based search (from:, to:, subject:, received:, hasAttachment:, etc.)
+
+### Composing & Replying
+- Draft new emails with `OUTLOOK_CREATE_DRAFT`
+- Send emails directly with `OUTLOOK_SEND_EMAIL`
+- Send existing drafts with `OUTLOOK_SEND_DRAFT`
+- Reply to messages with `OUTLOOK_CREATE_DRAFT_REPLY`
+- Create forward drafts with `OUTLOOK_CREATE_FORWARD_DRAFT`
+- Forward messages directly with `OUTLOOK_FORWARD_MESSAGE`
+
+### Inbox Organisation
+- Move messages between folders with `OUTLOOK_MOVE_MESSAGE`
+- Delete messages with `OUTLOOK_DELETE_MESSAGE`
+- Batch-update messages (mark read/unread, flag/unflag) with `OUTLOOK_BATCH_UPDATE_MESSAGES`
+- Create new mail folders with `OUTLOOK_CREATE_MAIL_FOLDER`
+- List all mail folders with `OUTLOOK_LIST_MAIL_FOLDERS`
+- Outlook uses **folders** (Inbox, Sent Items, Drafts, Archive, etc.) instead of labels
+
+## Calendar Capabilities
+
+### Reading & Searching Events
+- **Calendar view** (`OUTLOOK_GET_CALENDAR_VIEW`) — get all events active during a time window (includes multi-day events); use for "what's on my calendar today/this week" or availability checks
+- **List events** (`OUTLOOK_LIST_EVENTS`) — retrieve events with filtering, pagination, sorting, and timezone support
+- **Get event** (`OUTLOOK_GET_EVENT`) — retrieve full details of a specific event by ID
+- **List calendars** (`OUTLOOK_LIST_CALENDARS`) — list all calendars in the user's mailbox
+
+### Scheduling & Meeting Management
+- **Create event** (`OUTLOOK_CALENDAR_CREATE_EVENT`) — create a new calendar event with title, start/end datetime, attendees, location, and description; pass `isOnlineMeeting: true` and `onlineMeetingProvider: "teamsForBusiness"` to auto-generate a Microsoft Teams meeting link
+- **Update event** (`OUTLOOK_UPDATE_CALENDAR_EVENT`) — update specific fields of an existing event (reschedule, change attendees, modify details)
+- **Delete event** (`OUTLOOK_DELETE_CALENDAR_EVENT`) — permanently remove an event
+- **Cancel event** (`OUTLOOK_CANCEL_EVENT`) — cancel a meeting and send cancellation notifications to all attendees
+- **Decline event** (`OUTLOOK_DECLINE_EVENT`) — decline a meeting invitation
+
+### Conflict Detection & Availability
+- **Find meeting times** (`OUTLOOK_FIND_MEETING_TIMES`) — suggest optimal meeting slots based on organizer and attendee availability, time constraints, and duration
+- **Get schedule** (`OUTLOOK_GET_SCHEDULE`) — retrieve free/busy schedule for specified email addresses within a time window; use to check availability before scheduling
+
+## Microsoft Contacts
+
+- List all contacts with `OUTLOOK_LIST_USER_CONTACTS`
+- Create a new contact with `OUTLOOK_CREATE_CONTACT` (name, email, phone, company, etc.)
+- Update an existing contact with `OUTLOOK_UPDATE_CONTACT`
+- Use contact data to auto-fill recipient email addresses when composing, replying, or creating calendar invites
+
+## Profile & Settings
+
+- Retrieve the user's Outlook profile with `OUTLOOK_GET_PROFILE`
+- View mailbox settings (timezone, working hours, auto-replies) with `OUTLOOK_GET_MAILBOX_SETTINGS`
+- Get drafts folder details with `OUTLOOK_GET_DRAFTS_MAIL_FOLDER`
+
+{_SHARED_FORMATTING}
+## Schedule & Meet Workflow
+
+Follow these stages whenever the user asks to schedule a meeting, set up a call, or send a meeting invite:
+
+### Stage 1 — Gather Details
+**Respond immediately with a text message — do NOT call any tools yet.**
+Always open with a short line of text, then present the fillable template below so the user can edit it inline and click **Use this ↗** to send it back. Pre-fill any fields you already know from the request; leave the rest as illustrative placeholders.
+
+Here's a quick template you can fill in:
+
+```
+Title:     Weekly Sync
+Date:      Tomorrow at 3 pm
+Duration:  30 minutes
+Attendees: Alice Martin (alice.martin@example.com)
+Agenda:    Discuss project updates and next steps
+```
+
+Wait for the user's filled-in response before calling any tools.
+
+### Stage 2 — Check for Conflicts
+Once the recipient and time are provided, check the calendar for any existing events at that slot using `OUTLOOK_GET_CALENDAR_VIEW` or `OUTLOOK_GET_SCHEDULE`.
+
+**If no conflict:** Proceed directly to Stage 3.
+
+**If there is a conflict:** Present the details of the conflicting event and ask the user to choose one of these options:
+- **Option A — Reschedule the existing meeting first:** Suggest rescheduling the conflicting event to a nearby free slot (use `OUTLOOK_FIND_MEETING_TIMES` to find one), then schedule the new meeting in the original slot.
+- **Option B — Proceed with the new meeting:** Go ahead and schedule the new meeting. Once sent, ask: Would you also like to cancel, reschedule, or make any changes to the conflicting meeting?
+
+Wait for the user's choice before proceeding.
+
+### Stage 3 — Draft & Send Invite
+1. Look up the recipient's email from Outlook Contacts via `OUTLOOK_LIST_USER_CONTACTS`.
+2. Create the event with `OUTLOOK_CALENDAR_CREATE_EVENT` for the confirmed slot — always pass `isOnlineMeeting: true` and `onlineMeetingProvider: "teamsForBusiness"` to auto-generate a Microsoft Teams meeting link. Include attendees — Outlook sends invites automatically with the Teams join link embedded.
+3. Suggest a default Meeting Title and Agenda for the user to review and modify.
+4. Present the full draft invite and wait for confirmation.
+5. Once confirmed, send the invite.
+
+For **Schedule & Email** requests, after sending the invite also draft and send a follow-up email with the agenda to all attendees using `OUTLOOK_SEND_EMAIL`.
+
+## Behaviour
+- Before sending an email, confirm the recipient, subject, and key content with the user unless explicitly told to proceed
+- When displaying emails, always show: sender, subject, date, and a one-line summary
+- Outlook uses **folders** (not labels) for organisation — use folder-related tools accordingly
+- Outlook uses **conversations** (not threads) — when fetching related messages, filter by conversationId via `OUTLOOK_LIST_MESSAGES`
+- When the user asks to "organise", "clean up", or "sort" their inbox, suggest moving messages to appropriate folders
+- Before creating a calendar event, confirm title, date/time, duration, and attendees unless explicitly told to proceed
+- When scheduling a meeting, use **30 minutes** as the default duration if the user has not specified one
+- **Always check for conflicts before scheduling:** Use `OUTLOOK_GET_CALENDAR_VIEW` or `OUTLOOK_GET_SCHEDULE` to check the proposed time slot before creating an event. If a conflict exists, present the details and ask the user how to proceed.
+- **Rescheduling conflicts — always confirm before acting:** When any conflict is detected and the resolution involves rescheduling an existing event, present the conflicting event details and your proposed new time, then wait for explicit user approval before calling `OUTLOOK_UPDATE_CALENDAR_EVENT`. Never reschedule an existing event automatically.
+- When an attendee is specified by name only, look up their email via `OUTLOOK_LIST_USER_CONTACTS` before creating an event or sending an invite
+- For WhatsApp notifications, use the `send_whatsapp_message` tool with `recipient_type='self'`
+- If a request is ambiguous, ask one clarifying question before acting
+"""
+
 _SYSTEM_PROMPTS: dict[str, str] = {
     "gmail":     GMAIL_SYSTEM_PROMPT,
     "calendar":  CALENDAR_SYSTEM_PROMPT,
     "workspace": WORKSPACE_SYSTEM_PROMPT,
+    "outlook":   OUTLOOK_SYSTEM_PROMPT,
 }
 
 # ── Routing prompt ─────────────────────────────────────────────────────────────
@@ -480,11 +610,16 @@ _WHATSAPP_TOOL = {
 
 def _build_profile_block(email: str, display_name: str | None, profile: dict) -> str:
     """
-    Build a system-prompt block from the user's pre-fetched Workspace profile.
+    Build a system-prompt block from the user's pre-fetched profile.
+    Automatically adapts to the provider (gmail vs outlook) based on the
+    ``provider`` key in the profile dict.
     Every field is optional — missing keys are silently omitted.
     The agent reads this once on session start and must never ask the user for
     any information already present here.
     """
+    provider = profile.get("provider", "gmail")
+    is_outlook = provider == "outlook"
+
     lines = ["## User Profile (pre-loaded — never ask the user for this information)"]
 
     # ── Identity ──────────────────────────────────────────────────────────────
@@ -492,10 +627,18 @@ def _build_profile_block(email: str, display_name: str | None, profile: dict) ->
     lines.append(f"- **Email**: {email}")
     if display_name:
         lines.append(f"- **Name**: {display_name}")
-    if profile.get("gmail_messages_total") is not None:
-        lines.append(f"- **Total Gmail messages**: {profile['gmail_messages_total']:,}")
-    if profile.get("gmail_threads_total") is not None:
-        lines.append(f"- **Total Gmail threads**: {profile['gmail_threads_total']:,}")
+    if is_outlook:
+        if profile.get("outlook_display_name"):
+            lines.append(f"- **Outlook display name**: {profile['outlook_display_name']}")
+        if profile.get("job_title"):
+            lines.append(f"- **Job title**: {profile['job_title']}")
+        if profile.get("office_location"):
+            lines.append(f"- **Office**: {profile['office_location']}")
+    else:
+        if profile.get("gmail_messages_total") is not None:
+            lines.append(f"- **Total Gmail messages**: {profile['gmail_messages_total']:,}")
+        if profile.get("gmail_threads_total") is not None:
+            lines.append(f"- **Total Gmail threads**: {profile['gmail_threads_total']:,}")
 
     # ── Preferences ───────────────────────────────────────────────────────────
     tz = profile.get("timezone", "")
@@ -506,14 +649,24 @@ def _build_profile_block(email: str, display_name: str | None, profile: dict) ->
         prefs.append(f"- **Current date/time**: {profile['current_datetime']}")
     if profile.get("locale"):
         prefs.append(f"- **Locale**: {profile['locale']}")
+    if profile.get("language"):
+        prefs.append(f"- **Language**: {profile['language']}")
     if profile.get("date_format"):
         prefs.append(f"- **Date format**: {profile['date_format']}")
     if profile.get("time_format"):
         prefs.append(f"- **Time format**: {profile['time_format']}")
-    if profile.get("week_starts_on"):
-        prefs.append(f"- **Week starts on**: {profile['week_starts_on']}")
-    if profile.get("default_event_length_mins"):
-        prefs.append(f"- **Default event duration**: {profile['default_event_length_mins']} minutes")
+    if not is_outlook:
+        if profile.get("week_starts_on"):
+            prefs.append(f"- **Week starts on**: {profile['week_starts_on']}")
+        if profile.get("default_event_length_mins"):
+            prefs.append(f"- **Default event duration**: {profile['default_event_length_mins']} minutes")
+    if is_outlook:
+        if profile.get("working_days"):
+            days = profile["working_days"]
+            days_str = ", ".join(days) if isinstance(days, list) else str(days)
+            prefs.append(f"- **Working days**: {days_str}")
+        if profile.get("working_hours"):
+            prefs.append(f"- **Working hours**: {profile['working_hours']}")
 
     if prefs:
         lines.append("\n### Preferences")
@@ -524,25 +677,40 @@ def _build_profile_block(email: str, display_name: str | None, profile: dict) ->
     if calendars:
         lines.append("\n### Calendars")
         for cal in calendars:
-            marker = " *(primary)*" if cal.get("primary") else ""
-            role = f" [{cal['access_role']}]" if cal.get("access_role") else ""
-            lines.append(f"- {cal['name']}{marker}{role}")
+            if is_outlook:
+                marker = " *(default)*" if cal.get("primary") else ""
+                edit_flag = " [read-only]" if not cal.get("can_edit", True) else ""
+                lines.append(f"- {cal['name']}{marker}{edit_flag}")
+            else:
+                marker = " *(primary)*" if cal.get("primary") else ""
+                role = f" [{cal['access_role']}]" if cal.get("access_role") else ""
+                lines.append(f"- {cal['name']}{marker}{role}")
 
     # ── Frequent contacts ──────────────────────────────────────────────────────
     frequent = profile.get("frequent_contacts", [])
     if frequent:
-        lines.append("\n### Frequent Contacts (from recent calendar events)")
+        source = "Outlook Contacts" if is_outlook else "Google Contacts"
+        lines.append(f"\n### Frequent Contacts (from {source})")
         for c in frequent:
             name_part = f"{c['name']} " if c.get("name") else ""
-            lines.append(f"- {name_part}<{c['email']}>")
+            phone_part = f" · {c['phone']}" if c.get("phone") else ""
+            lines.append(f"- {name_part}<{c['email']}>{phone_part}")
 
     # ── Standing instructions ─────────────────────────────────────────────────
-    lines.append(
-        "\n**Instructions**: Use all profile information above directly — never ask "
-        "the user to confirm timezone, name, calendar, contact, or frequent-contact details "
-        "already listed. When the user refers to someone by first name, check Frequent Contacts "
-        "first — only call the Composio `GOOGLECONTACTS_*` tool if no match is found there. "
-    )
+    if is_outlook:
+        lines.append(
+            "\n**Instructions**: Use all profile information above directly — never ask "
+            "the user to confirm timezone, name, calendar, contact, or frequent-contact details "
+            "already listed. When the user refers to someone by first name, check Frequent Contacts "
+            "first — only call `OUTLOOK_LIST_USER_CONTACTS` if no match is found there."
+        )
+    else:
+        lines.append(
+            "\n**Instructions**: Use all profile information above directly — never ask "
+            "the user to confirm timezone, name, calendar, contact, or frequent-contact details "
+            "already listed. When the user refers to someone by first name, check Frequent Contacts "
+            "first — only call the Composio `GOOGLECONTACTS_*` tool if no match is found there."
+        )
     if tz:
         lines.append(f"All dates and times must use the `{tz}` timezone.")
 
@@ -739,20 +907,21 @@ async def preload_session(email: str) -> None:
         return
 
     user_id = email_to_user_id(email)
+    provider = _provider_for(email)
 
     try:
-        profile = await asyncio.to_thread(get_user_profile, user_id)
+        profile = await asyncio.to_thread(get_user_profile, user_id, provider)
         session.user_profile = profile
         session.profile_fetched_at = now
         session_store.update(session)
-        save_profile(email, session.display_name, profile)
-        logger.info("preload_session: profile loaded and persisted for %s", email)
+        save_profile(email, session.display_name, profile, provider)
+        logger.info("preload_session: %s profile loaded and persisted for %s", provider, email)
     except Exception as exc:
         logger.warning("preload_session: profile fetch failed for %s: %s", email, exc)
         return
 
     # Pre-build system prompts for all agents
-    for agent_type in ("gmail", "calendar", "workspace"):
+    for agent_type in ("gmail", "calendar", "workspace", "outlook"):
         if session.get_system_prompt(agent_type) is not None:
             continue  # already cached
         base_prompt = _SYSTEM_PROMPTS.get(agent_type, GMAIL_SYSTEM_PROMPT)
@@ -785,7 +954,7 @@ async def stream_agent_response(
     """
     client = _get_client()
     composio_user_id = email_to_user_id(session.email)
-    base_prompt = _SYSTEM_PROMPTS.get(agent_type, GMAIL_SYSTEM_PROMPT)
+    base_prompt = _SYSTEM_PROMPTS.get(agent_type, OUTLOOK_SYSTEM_PROMPT if agent_type == "outlook" else GMAIL_SYSTEM_PROMPT)
 
     try:
         tools = await _get_tools_cached(composio_user_id, agent_type)
@@ -797,15 +966,16 @@ async def stream_agent_response(
     tools = tools + [_WHATSAPP_TOOL]
 
     # Use preloaded system prompt if available; otherwise build it now (fallback)
+    provider = _provider_for(session.email)
     system_prompt = session.get_system_prompt(agent_type)
     if system_prompt is None:
         if not session.user_profile:
             try:
                 session.user_profile = await asyncio.to_thread(
-                    get_user_profile, composio_user_id
+                    get_user_profile, composio_user_id, provider
                 )
                 session.profile_fetched_at = datetime.utcnow()
-                save_profile(session.email, session.display_name, session.user_profile)
+                save_profile(session.email, session.display_name, session.user_profile, provider)
             except Exception:
                 pass
         profile_block = _build_profile_block(

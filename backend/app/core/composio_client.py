@@ -84,15 +84,62 @@ _GMAIL_WORKSPACE_TOOLS = [
 ]
 
 
+# Outlook: curated from 200+ tools to 31 core tools.
+# Covers: email (list/get/search/compose/send/reply/forward/delete/move/batch),
+#          folders, contacts (CRUD), calendar (create/view/update/delete/cancel/
+#          find-meeting-times/free-busy/decline), profile, and mailbox settings.
+_OUTLOOK_TOOLS = [
+    # ── Email ──────────────────────────────────────────────────────────
+    "OUTLOOK_LIST_MESSAGES",
+    "OUTLOOK_GET_MESSAGE",
+    "OUTLOOK_SEARCH_MESSAGES",
+    "OUTLOOK_CREATE_DRAFT",
+    "OUTLOOK_SEND_EMAIL",
+    "OUTLOOK_SEND_DRAFT",
+    "OUTLOOK_CREATE_DRAFT_REPLY",
+    "OUTLOOK_CREATE_FORWARD_DRAFT",
+    "OUTLOOK_FORWARD_MESSAGE",
+    "OUTLOOK_DELETE_MESSAGE",
+    "OUTLOOK_MOVE_MESSAGE",
+    "OUTLOOK_BATCH_UPDATE_MESSAGES",
+    # ── Folders ────────────────────────────────────────────────────────
+    "OUTLOOK_CREATE_MAIL_FOLDER",
+    "OUTLOOK_LIST_MAIL_FOLDERS",
+    "OUTLOOK_GET_DRAFTS_MAIL_FOLDER",
+    # ── Calendar / Meetings ────────────────────────────────────────────
+    "OUTLOOK_CALENDAR_CREATE_EVENT",
+    "OUTLOOK_GET_CALENDAR_VIEW",
+    "OUTLOOK_LIST_EVENTS",
+    "OUTLOOK_GET_EVENT",
+    "OUTLOOK_UPDATE_CALENDAR_EVENT",
+    "OUTLOOK_DELETE_CALENDAR_EVENT",
+    "OUTLOOK_CANCEL_EVENT",
+    "OUTLOOK_FIND_MEETING_TIMES",
+    "OUTLOOK_GET_SCHEDULE",
+    "OUTLOOK_DECLINE_EVENT",
+    "OUTLOOK_LIST_CALENDARS",
+    # ── Contacts ───────────────────────────────────────────────────────
+    "OUTLOOK_CREATE_CONTACT",
+    "OUTLOOK_LIST_USER_CONTACTS",
+    "OUTLOOK_UPDATE_CONTACT",
+    # ── Profile & Settings ─────────────────────────────────────────────
+    "OUTLOOK_GET_PROFILE",
+    "OUTLOOK_GET_MAILBOX_SETTINGS",
+]
+
+
 def get_tools(user_id: str, agent_type: str = "gmail") -> list:
     """
     Return Anthropic-compatible ToolParam list for the given agent type.
-    agent_type: "gmail" | "calendar" | "workspace"
+    agent_type: "gmail" | "calendar" | "workspace" | "outlook"
 
     Google Contacts is handled as a native tool in agent.py — not via Composio.
     Calendar — uses the explicit full tool list because the default
                toolkits=["googlecalendar"] only returns 20 of 40 tools.
+    Outlook — uses a curated explicit list (16 tools from 200+).
     """
+    if agent_type == "outlook":
+        return _composio.tools.get(user_id=user_id, tools=_OUTLOOK_TOOLS)
     if agent_type == "calendar":
         calendar_tools = _composio.tools.get(user_id=user_id, tools=_CALENDAR_ALL_TOOLS)
         contact_tools = _composio.tools.get(user_id=user_id, toolkits=["googlecontacts"])
@@ -119,10 +166,11 @@ def check_connection_status(user_id: str, toolkit: str = "gmail") -> bool:
 
 
 def check_all_connections(user_id: str) -> dict[str, bool]:
-    """Return connection status for both Gmail and Google Calendar."""
+    """Return connection status for Gmail, Google Calendar, and Outlook."""
     return {
         "gmail":    check_connection_status(user_id, "gmail"),
         "calendar": check_connection_status(user_id, "googlecalendar"),
+        "outlook":  check_connection_status(user_id, "outlook"),
     }
 
 
@@ -130,6 +178,8 @@ def _auth_config_for(agent_type: str) -> str:
     """Return the correct Composio auth config ID for the given agent type."""
     if agent_type == "calendar":
         return settings.calendar_auth_config_id
+    if agent_type == "outlook":
+        return settings.outlook_auth_config_id
     return settings.gmail_auth_config_id
 
 
@@ -144,7 +194,12 @@ def initiate_connection(
     for the calendar agent.
     Returns the OAuth URL, or None if this toolkit is already connected.
     """
-    toolkit = "googlecalendar" if agent_type == "calendar" else "gmail"
+    if agent_type == "outlook":
+        toolkit = "outlook"
+    elif agent_type == "calendar":
+        toolkit = "googlecalendar"
+    else:
+        toolkit = "gmail"
     if check_connection_status(user_id, toolkit):
         return None
 
@@ -399,25 +454,34 @@ def _fetch_frequent_contacts(user_id: str) -> dict:
     return {}
 
 
-def get_user_profile(user_id: str) -> dict:
+def get_user_profile(user_id: str, provider: str = "gmail") -> dict:
     """
-    Fetch a rich user profile from Google Workspace sources in parallel.
-    All 3 sources run concurrently with a 10 s total timeout — a slow or
+    Fetch a rich user profile from the appropriate provider APIs in parallel.
+    All sources run concurrently with a 10 s total timeout — a slow or
     failed source never blocks the others. Callers treat every key as optional.
 
-    Sources (run in parallel):
-      - GMAIL_GET_PROFILE              → Gmail display name, email, message/thread counts
+    provider="gmail" (Google Workspace):
+      - GMAIL_GET_PROFILE              → email, message/thread counts
       - GOOGLECALENDAR_SETTINGS_LIST   → timezone, locale, date/time format, week start
       - GOOGLECALENDAR_LIST_CALENDARS  → user's calendar list
-    Then (sequential, needs timezone from settings):
+      - GOOGLECONTACTS_LIST_CONTACTS   → frequent contacts
       - GOOGLECALENDAR_GET_CURRENT_DATE_TIME → current local date/time
 
-    Note: Google Contacts are not pre-fetched here — agents use the
-    native google_contacts tool to look up contacts on demand.
+    provider="outlook" (Microsoft 365):
+      - OUTLOOK_GET_PROFILE            → email, display name
+      - OUTLOOK_GET_MAILBOX_SETTINGS   → timezone, working hours, locale
+      - OUTLOOK_LIST_CALENDARS         → user's calendar list
+      - OUTLOOK_LIST_USER_CONTACTS     → frequent contacts
     """
-    profile: dict = {}
+    if provider == "outlook":
+        return _get_user_profile_outlook(user_id)
+    return _get_user_profile_gmail(user_id)
 
-    # ── Parallel fetch of independent sources ─────────────────────────────────
+
+def _get_user_profile_gmail(user_id: str) -> dict:
+    """Fetch profile from Google Workspace APIs."""
+    profile: dict = {"provider": "gmail"}
+
     with ThreadPoolExecutor(max_workers=settings.profile_fetch_workers) as pool:
         futures = {
             "gmail":     pool.submit(_fetch_gmail_profile, user_id),
@@ -431,7 +495,7 @@ def get_user_profile(user_id: str) -> dict:
             except Exception:
                 pass
 
-    # ── Current datetime (needs timezone resolved above) ──────────────────────
+    # Current datetime (needs timezone resolved above)
     tz = profile.get("timezone", "UTC")
     try:
         raw = execute_tool(
@@ -447,6 +511,268 @@ def get_user_profile(user_id: str) -> dict:
             profile["current_datetime"] = dt
     except Exception:
         pass
+
+    return profile
+
+
+# ── Outlook profile fetchers ─────────────────────────────────────────────────
+
+def _fetch_outlook_profile(user_id: str) -> dict:
+    """Fetch Outlook profile metadata (displayName, email, jobTitle, etc.)."""
+    result: dict = {}
+    try:
+        raw = execute_tool(user_id, "OUTLOOK_GET_PROFILE", {})
+        data = json.loads(raw)
+        if isinstance(data, dict):
+            if data.get("mail") or data.get("userPrincipalName"):
+                result["outlook_email"] = data.get("mail") or data.get("userPrincipalName", "")
+            if data.get("displayName"):
+                result["outlook_display_name"] = data["displayName"]
+            if data.get("jobTitle"):
+                result["job_title"] = data["jobTitle"]
+            if data.get("officeLocation"):
+                result["office_location"] = data["officeLocation"]
+    except Exception:
+        pass
+    return result
+
+
+def _windows_tz_to_iana(win_tz: str) -> str:
+    """Best-effort mapping from Windows timezone names to IANA identifiers.
+
+    Microsoft Graph returns Windows names (e.g. "India Standard Time").
+    Agents and Python's zoneinfo need IANA names (e.g. "Asia/Kolkata").
+    Falls back to the original string if no mapping is found — the system
+    prompt still shows the user's timezone even if un-normalised.
+    """
+    _MAP = {
+        "Dateline Standard Time":              "Etc/GMT+12",
+        "UTC-11":                              "Pacific/Pago_Pago",
+        "Hawaiian Standard Time":              "Pacific/Honolulu",
+        "Alaskan Standard Time":               "America/Anchorage",
+        "Pacific Standard Time":               "America/Los_Angeles",
+        "US Mountain Standard Time":           "America/Phoenix",
+        "Mountain Standard Time":              "America/Denver",
+        "Central Standard Time":               "America/Chicago",
+        "Eastern Standard Time":               "America/New_York",
+        "US Eastern Standard Time":            "America/Indianapolis",
+        "Atlantic Standard Time":              "America/Halifax",
+        "Newfoundland Standard Time":          "America/St_Johns",
+        "SA Eastern Standard Time":            "America/Cayenne",
+        "E. South America Standard Time":      "America/Sao_Paulo",
+        "UTC":                                 "UTC",
+        "GMT Standard Time":                   "Europe/London",
+        "W. Europe Standard Time":             "Europe/Berlin",
+        "Central European Standard Time":      "Europe/Warsaw",
+        "Romance Standard Time":               "Europe/Paris",
+        "Central Europe Standard Time":        "Europe/Budapest",
+        "E. Europe Standard Time":             "Europe/Chisinau",
+        "FLE Standard Time":                   "Europe/Kiev",
+        "GTB Standard Time":                   "Europe/Bucharest",
+        "Russian Standard Time":               "Europe/Moscow",
+        "Turkey Standard Time":                "Europe/Istanbul",
+        "Israel Standard Time":                "Asia/Jerusalem",
+        "South Africa Standard Time":          "Africa/Johannesburg",
+        "Egypt Standard Time":                 "Africa/Cairo",
+        "Arabic Standard Time":                "Asia/Baghdad",
+        "Arab Standard Time":                  "Asia/Riyadh",
+        "Iran Standard Time":                  "Asia/Tehran",
+        "Arabian Standard Time":               "Asia/Dubai",
+        "Azerbaijan Standard Time":            "Asia/Baku",
+        "Afghanistan Standard Time":           "Asia/Kabul",
+        "Pakistan Standard Time":              "Asia/Karachi",
+        "West Asia Standard Time":             "Asia/Tashkent",
+        "India Standard Time":                 "Asia/Kolkata",
+        "Sri Lanka Standard Time":             "Asia/Colombo",
+        "Nepal Standard Time":                 "Asia/Kathmandu",
+        "Central Asia Standard Time":          "Asia/Almaty",
+        "Bangladesh Standard Time":            "Asia/Dhaka",
+        "Myanmar Standard Time":               "Asia/Yangon",
+        "SE Asia Standard Time":               "Asia/Bangkok",
+        "China Standard Time":                 "Asia/Shanghai",
+        "Singapore Standard Time":             "Asia/Singapore",
+        "W. Australia Standard Time":          "Australia/Perth",
+        "Taipei Standard Time":                "Asia/Taipei",
+        "Tokyo Standard Time":                 "Asia/Tokyo",
+        "Korea Standard Time":                 "Asia/Seoul",
+        "AUS Central Standard Time":           "Australia/Darwin",
+        "Cen. Australia Standard Time":        "Australia/Adelaide",
+        "AUS Eastern Standard Time":           "Australia/Sydney",
+        "E. Australia Standard Time":          "Australia/Brisbane",
+        "West Pacific Standard Time":          "Pacific/Port_Moresby",
+        "Tasmania Standard Time":              "Australia/Hobart",
+        "New Zealand Standard Time":           "Pacific/Auckland",
+        "Fiji Standard Time":                  "Pacific/Fiji",
+        "Samoa Standard Time":                 "Pacific/Apia",
+    }
+    return _MAP.get(win_tz, win_tz)
+
+
+def _fetch_outlook_mailbox_settings(user_id: str) -> dict:
+    """Fetch Outlook mailbox settings (timezone, working hours, locale, auto-replies)."""
+    result: dict = {}
+    try:
+        raw = execute_tool(user_id, "OUTLOOK_GET_MAILBOX_SETTINGS", {})
+        data = json.loads(raw)
+        if isinstance(data, dict):
+            # timezone — Graph returns Windows names; convert to IANA
+            raw_tz = data.get("timeZone") or data.get("timezone") or ""
+            if raw_tz:
+                result["timezone"] = _windows_tz_to_iana(raw_tz)
+                result["timezone_raw"] = raw_tz  # preserve original for reference
+            # locale / language
+            lang = data.get("language") or {}
+            if isinstance(lang, dict):
+                locale = lang.get("locale") or ""
+                display_name = lang.get("displayName") or ""
+                if locale:
+                    result["locale"] = locale
+                if display_name:
+                    result["language"] = display_name
+            elif isinstance(lang, str) and lang:
+                result["locale"] = lang
+            # working hours
+            wh = data.get("workingHours") or {}
+            if isinstance(wh, dict):
+                days = wh.get("daysOfWeek", [])
+                if days:
+                    result["working_days"] = days
+                start_time = wh.get("startTime") or ""
+                end_time = wh.get("endTime") or ""
+                if start_time and end_time:
+                    result["working_hours"] = f"{start_time} – {end_time}"
+                wh_tz = (wh.get("timeZone") or {})
+                if isinstance(wh_tz, dict):
+                    wh_tz_name = wh_tz.get("name") or ""
+                    if wh_tz_name and not result.get("timezone"):
+                        result["timezone"] = _windows_tz_to_iana(wh_tz_name)
+                        result["timezone_raw"] = wh_tz_name
+            # date/time format
+            if data.get("dateFormat"):
+                result["date_format"] = data["dateFormat"]
+            if data.get("timeFormat"):
+                result["time_format"] = data["timeFormat"]
+    except Exception:
+        pass
+    return result
+
+
+def _fetch_outlook_calendars(user_id: str) -> dict:
+    """Fetch the user's Outlook calendar list."""
+    result: dict = {}
+    try:
+        raw = execute_tool(user_id, "OUTLOOK_LIST_CALENDARS", {})
+        data = json.loads(raw)
+        items = data.get("value") or data.get("calendars") or (data if isinstance(data, list) else [])
+        calendars = []
+        for cal in items:
+            if isinstance(cal, dict):
+                entry = {
+                    "name": cal.get("name") or cal.get("summary") or "",
+                    "primary": cal.get("isDefaultCalendar") or cal.get("primary", False),
+                    "id": cal.get("id") or "",
+                    "color": cal.get("color") or "",
+                    "can_edit": cal.get("canEdit", True),
+                }
+                if entry["name"] or entry["id"]:
+                    calendars.append(entry)
+        if calendars:
+            result["calendars"] = calendars
+    except Exception:
+        pass
+    return result
+
+
+def _fetch_outlook_contacts(user_id: str) -> dict:
+    """Fetch the user's Outlook contacts."""
+    try:
+        raw = execute_tool(user_id, "OUTLOOK_LIST_USER_CONTACTS", {})
+        data = json.loads(raw)
+        contacts_raw = (
+            data.get("value")
+            or data.get("contacts")
+            or (data if isinstance(data, list) else [])
+        )
+        contacts = []
+        for c in contacts_raw:
+            if not isinstance(c, dict):
+                continue
+            name = c.get("displayName") or c.get("name") or ""
+            # Outlook contacts have emailAddresses as a list of {name, address}
+            email = ""
+            email_addrs = c.get("emailAddresses") or []
+            if isinstance(email_addrs, list) and email_addrs:
+                first_email = email_addrs[0]
+                if isinstance(first_email, dict):
+                    email = first_email.get("address") or first_email.get("email") or ""
+                elif isinstance(first_email, str):
+                    email = first_email
+            if not email:
+                email = c.get("email") or c.get("emailAddress") or ""
+            # Phone numbers
+            phone = ""
+            phones = c.get("mobilePhone") or ""
+            if not phones:
+                business_phones = c.get("businessPhones") or []
+                if isinstance(business_phones, list) and business_phones:
+                    phone = business_phones[0]
+            else:
+                phone = phones
+            if email:
+                entry: dict = {"name": name.strip(), "email": email.strip().lower()}
+                if phone:
+                    entry["phone"] = phone.strip()
+                contacts.append(entry)
+        if contacts:
+            return {"frequent_contacts": contacts}
+    except Exception:
+        pass
+    return {}
+
+
+def _get_user_profile_outlook(user_id: str) -> dict:
+    """Fetch profile from Microsoft 365 / Outlook APIs.
+
+    Mailbox settings are fetched FIRST (blocking) so the resolved timezone
+    is available before any other source needs it.  The remaining sources
+    (profile, calendars, contacts) run in parallel afterwards.
+    """
+    profile: dict = {"provider": "outlook"}
+
+    # Step 1 — fetch mailbox settings first to get the user's timezone
+    try:
+        mailbox = _fetch_outlook_mailbox_settings(user_id)
+        profile.update(mailbox)
+    except Exception:
+        pass
+
+    # Step 2 — fetch the remaining sources in parallel
+    with ThreadPoolExecutor(max_workers=settings.profile_fetch_workers) as pool:
+        futures = {
+            "profile":   pool.submit(_fetch_outlook_profile, user_id),
+            "calendars": pool.submit(_fetch_outlook_calendars, user_id),
+            "contacts":  pool.submit(_fetch_outlook_contacts, user_id),
+        }
+        for key, future in futures.items():
+            try:
+                profile.update(future.result(timeout=settings.profile_fetch_timeout))
+            except Exception:
+                pass
+
+    # Step 3 — compute current datetime in the user's resolved timezone
+    tz_name = profile.get("timezone", "UTC")
+    try:
+        from zoneinfo import ZoneInfo
+        from datetime import datetime as _dt
+        user_now = _dt.now(ZoneInfo(tz_name))
+        profile["current_datetime"] = user_now.strftime("%Y-%m-%d %H:%M %Z")
+    except Exception:
+        # Timezone unrecognised — fall back to UTC
+        try:
+            from datetime import datetime as _dt, timezone as _tz
+            profile["current_datetime"] = _dt.now(_tz.utc).strftime("%Y-%m-%d %H:%M UTC")
+        except Exception:
+            pass
 
     return profile
 

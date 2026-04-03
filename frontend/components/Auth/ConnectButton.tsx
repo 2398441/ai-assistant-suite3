@@ -1,23 +1,34 @@
 "use client";
 
-import { useState } from "react";
-import { Spinner, SparkleIcon, GoogleIcon } from "@/components/ui/icons";
+import { useState, useMemo } from "react";
+import { Spinner, SparkleIcon, GoogleIcon, MicrosoftIcon } from "@/components/ui/icons";
 
 interface ConnectButtonProps {
   onConnect: (email: string) => Promise<void>;
   isLoading?: boolean;
 }
 
+function isGmailAddress(email: string): boolean {
+  const domain = email.split("@")[1]?.toLowerCase() ?? "";
+  return domain === "gmail.com" || domain === "googlemail.com";
+}
+
 export function ConnectButton({ onConnect, isLoading }: ConnectButtonProps) {
   const [email, setEmail] = useState("");
   const [error, setError] = useState("");
+
+  const isGmail = useMemo(() => {
+    const trimmed = email.trim().toLowerCase();
+    if (!trimmed.includes("@")) return true; // default to Google before domain is typed
+    return isGmailAddress(trimmed);
+  }, [email]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
     const trimmed = email.trim().toLowerCase();
     if (!trimmed || !trimmed.includes("@")) {
-      setError("Please enter a valid Gmail address.");
+      setError("Please enter a valid email address.");
       return;
     }
     try {
@@ -36,19 +47,19 @@ export function ConnectButton({ onConnect, isLoading }: ConnectButtonProps) {
         </div>
         <h1 className="text-2xl font-bold text-gray-900">AI Assistant</h1>
         <p className="mt-1 text-sm text-gray-500">
-          Gmail &amp; Calendar Integration
+          {isGmail ? "Gmail & Calendar Integration" : "Outlook Email Integration"}
         </p>
       </div>
 
       {/* Connect form */}
       <div className="w-full max-w-sm bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
         <h2 className="text-base font-semibold text-gray-800 mb-4">
-          Connect your Google Account
+          {isGmail ? "Connect your Google Account" : "Connect your Microsoft Account"}
         </h2>
         <form onSubmit={handleSubmit} className="space-y-3">
           <input
             type="email"
-            placeholder="your@gmail.com"
+            placeholder="your@email.com"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             disabled={isLoading}
@@ -65,10 +76,15 @@ export function ConnectButton({ onConnect, isLoading }: ConnectButtonProps) {
                 <Spinner className="animate-spin h-4 w-4" />
                 Connecting…
               </>
-            ) : (
+            ) : isGmail ? (
               <>
                 <GoogleIcon className="w-4 h-4" />
                 Continue with Google
+              </>
+            ) : (
+              <>
+                <MicrosoftIcon className="w-4 h-4" />
+                Continue with Microsoft
               </>
             )}
           </button>
@@ -76,10 +92,9 @@ export function ConnectButton({ onConnect, isLoading }: ConnectButtonProps) {
         <p className="mt-4 text-xs text-gray-400 text-center">
           Your credentials are managed securely by Composio.
           <br />
-          We never store your Google password.
+          We never store your password.
         </p>
       </div>
     </div>
   );
 }
-

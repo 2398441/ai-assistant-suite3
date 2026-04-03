@@ -85,6 +85,7 @@ export default function Home() {
         localStorage.setItem(STORAGE_KEY_USER_EMAIL, callbackEmail);
         window.history.replaceState({}, "", "/");
         setUserEmail(callbackEmail);
+        setActiveAgent(isGmailAddress(callbackEmail) ? "workspace" : "outlook");
         setAppState("chat");
         setTimeout(() => showGreeting(callbackEmail), GREETING_DISPLAY_DELAY_MS);
         triggerEmailSummarizer(callbackEmail).catch(() => {});
@@ -97,6 +98,7 @@ export default function Home() {
           const status = await getAuthStatus(savedEmail);
           if (status.connected) {
             setUserEmail(savedEmail);
+            setActiveAgent(isGmailAddress(savedEmail) ? "workspace" : "outlook");
             setAppState("chat");
             showGreeting(savedEmail);
             triggerEmailSummarizer(savedEmail).catch(() => {});
@@ -145,16 +147,29 @@ export default function Home() {
 
   // ── Auth ───────────────────────────────────────────────────────────────────
 
+  function isGmailAddress(addr: string): boolean {
+    const domain = addr.split("@")[1]?.toLowerCase() ?? "";
+    return domain === "gmail.com" || domain === "googlemail.com";
+  }
+
+  const isGmailUser = isGmailAddress(userEmail);
+  const availableAgents: AgentType[] = isGmailUser || !userEmail
+    ? ["workspace", "gmail", "calendar"]
+    : ["outlook"];
+
   async function handleConnect(email: string) {
     setIsConnecting(true);
     setError("");
+    const isGmail = isGmailAddress(email);
+    const agentType = isGmail ? "gmail" : "outlook";
     try {
       localStorage.setItem(STORAGE_KEY_PENDING_EMAIL, email);
       const callbackUrl = `${window.location.origin}/auth/callback`;
-      const result = await initiateAuth(email, callbackUrl, "gmail");
+      const result = await initiateAuth(email, callbackUrl, agentType);
       if (result.connected) {
         localStorage.setItem(STORAGE_KEY_USER_EMAIL, email);
         localStorage.removeItem(STORAGE_KEY_PENDING_EMAIL);
+        setActiveAgent(isGmail ? "workspace" : "outlook");
         setUserEmail(email);
         setAppState("chat");
         showGreeting(email);
@@ -448,6 +463,7 @@ export default function Home() {
             onAgentChange={setActiveAgent}
             disabled={isStreaming}
             notification={sidebarNotification}
+            availableAgents={availableAgents}
           />
         </div>
 
@@ -466,6 +482,7 @@ export default function Home() {
             onAgentChange={setActiveAgent}
             disabled={isStreaming}
             suggestion={suggestion ?? undefined}
+            availableAgents={availableAgents}
           />
         </div>
       </div>

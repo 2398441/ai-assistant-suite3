@@ -59,21 +59,32 @@ async def initiate_auth(request: AuthInitiateRequest):
     return AuthInitiateResponse(connected=False, auth_url=auth_url)
 
 
+def _is_gmail(email: str) -> bool:
+    """Return True if the email address belongs to a Gmail / Google domain."""
+    domain = email.rsplit("@", 1)[-1].lower()
+    return domain in ("gmail.com", "googlemail.com")
+
+
 @router.get("/status/{email}", response_model=AuthStatusResponse)
 async def get_auth_status(email: str):
     """
-    Check whether a user's Google accounts are connected via Composio.
+    Check whether a user's accounts are connected via Composio.
     Poll this after OAuth redirect until connected=true.
-    Returns per-toolkit status (gmail_connected, calendar_connected).
-    A session_token is returned once connected=true — the frontend must store it
-    and include it in all subsequent API calls.
+
+    Gmail users:   connected = gmail AND calendar
+    Outlook users: connected = outlook
     """
     user_id = email_to_user_id(email)
 
     statuses = await asyncio.to_thread(check_all_connections, user_id)
     gmail_connected = statuses["gmail"]
     calendar_connected = statuses["calendar"]
-    connected = gmail_connected and calendar_connected
+    outlook_connected = statuses["outlook"]
+
+    if _is_gmail(email):
+        connected = gmail_connected and calendar_connected
+    else:
+        connected = outlook_connected
 
     session = session_store.get_or_create(email)
     session.is_connected = connected
@@ -88,6 +99,7 @@ async def get_auth_status(email: str):
         connected=connected,
         gmail_connected=gmail_connected,
         calendar_connected=calendar_connected,
+        outlook_connected=outlook_connected,
         email=email,
         session_token=token,
     )

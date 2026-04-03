@@ -83,6 +83,12 @@ def reset_processed_ids(email: str) -> bool:
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+def _is_gmail(email: str) -> bool:
+    """Return True if the email address belongs to a Gmail / Google domain."""
+    domain = email.rsplit("@", 1)[-1].lower()
+    return domain in ("gmail.com", "googlemail.com")
+
+
 def _extract_messages(raw_result: str) -> list[dict]:
     """Parse the Composio tool result into a list of message dicts."""
     data = json.loads(raw_result)
@@ -93,13 +99,14 @@ def _extract_messages(raw_result: str) -> list[dict]:
             data.get("messages")
             or data.get("emails")
             or data.get("data", {}).get("messages", [])
+            or data.get("value")  # Outlook Graph API returns {"value": [...]}
             or []
         )
     return []
 
 
 def _msg_id(msg: dict) -> str:
-    """Extract the Gmail message ID from a message dict."""
+    """Extract a message ID from a message dict (Gmail or Outlook)."""
     return (
         msg.get("id")
         or msg.get("messageId")
@@ -109,20 +116,18 @@ def _msg_id(msg: dict) -> str:
     )
 
 
-def _format_emails(messages: list[dict]) -> str:
-    """Convert message dicts into readable text for Claude.
+def _format_emails_gmail(messages: list[dict]) -> str:
+    """Convert Gmail message dicts into readable text for Claude.
 
     Includes Gmail metadata (labels, category, importance) so the prompt
     can use Gmail's own signals as a pre-filter before inclusion/exclusion rules.
-    Body priority: body_plain → body → snippet (snippet is a ~100-char preview
-    that cuts off sign-offs; always prefer the full body when available).
+    Body priority: body_plain → body → snippet.
     """
     lines: list[str] = []
     for i, msg in enumerate(messages, 1):
         sender  = msg.get("from") or msg.get("sender") or msg.get("From", "Unknown")
         subject = msg.get("subject") or msg.get("Subject", "(no subject)")
 
-        # Full body preferred over Gmail's truncated snippet
         body = (
             msg.get("body_plain")
             or msg.get("body")
@@ -132,7 +137,6 @@ def _format_emails(messages: list[dict]) -> str:
         if isinstance(body, str):
             body = body[:settings.email_summarizer_body_chars]
 
-        # Gmail metadata — labels reveal category and importance signals
         raw_labels = msg.get("label_ids") or msg.get("labels") or []
         if isinstance(raw_labels, list):
             gmail_labels = ", ".join(raw_labels) if raw_labels else "none"
@@ -161,6 +165,60 @@ def _format_emails(messages: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _format_emails_outlook(messages: list[dict]) -> str:
+    """Convert Outlook message dicts into readable text for Claude.
+
+    Includes Outlook metadata (importance, flag, inferenceClassification)
+    so the prompt can use Outlook's own signals as a pre-filter.
+    """
+    lines: list[str] = []
+    for i, msg in enumerate(messages, 1):
+        # Outlook from field can be a dict: {"emailAddress": {"name": ..., "address": ...}}
+        from_field = msg.get("from") or msg.get("sender") or {}
+        if isinstance(from_field, dict):
+            email_addr = from_field.get("emailAddress", from_field)
+            sender = email_addr.get("name") or email_addr.get("address") or "Unknown"
+        else:
+            sender = str(from_field) or "Unknown"
+
+        subject = msg.get("subject") or "(no subject)"
+
+        # Outlook body can be a dict: {"contentType": "html", "content": "..."}
+        body_field = msg.get("body") or {}
+        if isinstance(body_field, dict):
+            body = body_field.get("content", "")
+        else:
+            body = str(body_field) if body_field else ""
+        # Fall back to bodyPreview (plain-text snippet)
+        if not body:
+            body = msg.get("bodyPreview", "")
+        if isinstance(body, str):
+            body = body[:settings.email_summarizer_body_chars]
+
+        # Outlook metadata
+        importance = msg.get("importance", "normal")  # low / normal / high
+        flag_data = msg.get("flag", {})
+        flag_status = flag_data.get("flagStatus", "notFlagged") if isinstance(flag_data, dict) else "notFlagged"
+        inference = msg.get("inferenceClassification", "other")  # focused / other
+        categories = msg.get("categories", [])
+        if isinstance(categories, list):
+            cats_str = ", ".join(categories) if categories else "none"
+        else:
+            cats_str = str(categories)
+
+        lines.append(
+            f"Email {i}:\n"
+            f"  From: {sender}\n"
+            f"  Subject: {subject}\n"
+            f"  Outlook-Importance: {importance}\n"
+            f"  Outlook-Flag: {flag_status}\n"
+            f"  Outlook-Classification: {inference}\n"
+            f"  Outlook-Categories: {cats_str}\n"
+            f"  Body: {body}\n"
+        )
+    return "\n".join(lines)
+
+
 # ── Rule summaries (shown in the chat system message) ────────────────────────
 
 INCLUSION_RULE_SUMMARY = (
@@ -176,32 +234,7 @@ EXCLUSION_RULE_SUMMARY = (
 
 # ── Core agent logic ──────────────────────────────────────────────────────────
 
-_SYSTEM_PROMPT = """\
-You are an executive assistant that extracts actionable items from emails.
-Each email is provided with Gmail metadata (Gmail-Labels, Gmail-Category, \
-Gmail-Important) in addition to the sender, subject, and body.
-
-Process each email through the three steps below IN ORDER. Stop at the first \
-step that makes a decision.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-STEP 1 — Gmail signal pre-filter
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Use Gmail's own metadata as the first signal before reading the content:
-
-IMMEDIATE INCLUDE (go straight to output, skip Steps 2 & 3):
-- Gmail-Important: yes  →  Gmail already flagged this as important; always include.
-- Gmail-Category is CATEGORY_PERSONAL  →  Gmail classified it as personal; always include.
-- Gmail-Labels contains STARRED  →  user starred it; always include.
-
-LEAN EXCLUDE (proceed to Step 2 to confirm — do NOT exclude solely on this):
-- Gmail-Category is CATEGORY_PROMOTIONS  →  likely marketing; still check Step 2.
-- Gmail-Category is CATEGORY_SOCIAL  →  likely social notification; still check Step 2.
-
-NEUTRAL (proceed to Step 2):
-- Gmail-Category is CATEGORY_UPDATES, CATEGORY_FORUMS, CATEGORY_UNKNOWN, or none.
-- Gmail-Important: no with no category signal.
-
+_SHARED_STEPS_2_3_AND_OUTPUT = """\
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 STEP 2 — Inclusion rule (overrides Step 1 LEAN EXCLUDE)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -285,9 +318,7 @@ Produce this table for EVERY email scanned (both included and excluded):
 - **From**: display name only (or part before @ if no display name)
 - **Subject**: truncated to 50 chars if needed
 - **Status**: ✅ Included or ❌ Excluded
-- **Reason**: one concise phrase explaining the decision — e.g. \
-"Personal sender, direct ask", "Gmail flagged as Important", "No-reply sender / automated alert", \
-"OTP/password reset only", "Transaction receipt, no personal ask", "Promotional, no action required"
+- **Reason**: one concise phrase explaining the decision
 - List emails in their original order (Email 1 first, Email N last)
 - Never use `|` inside any cell value — replace with `/` if needed
 
@@ -302,6 +333,61 @@ numbers (Step 1, Step 2, Step 3), pattern numbers (pattern 1, pattern 2), or any
 internal processing labels. Describe decisions in natural terms (e.g. "automated sender with \
 no personal ask" instead of "Step 3 pattern 1").
 """
+
+_GMAIL_SUMMARIZER_PROMPT = f"""\
+You are an executive assistant that extracts actionable items from emails.
+Each email is provided with Gmail metadata (Gmail-Labels, Gmail-Category, \
+Gmail-Important) in addition to the sender, subject, and body.
+
+Process each email through the three steps below IN ORDER. Stop at the first \
+step that makes a decision.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 1 — Gmail signal pre-filter
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Use Gmail's own metadata as the first signal before reading the content:
+
+IMMEDIATE INCLUDE (go straight to output, skip Steps 2 & 3):
+- Gmail-Important: yes  →  Gmail already flagged this as important; always include.
+- Gmail-Category is CATEGORY_PERSONAL  →  Gmail classified it as personal; always include.
+- Gmail-Labels contains STARRED  →  user starred it; always include.
+
+LEAN EXCLUDE (proceed to Step 2 to confirm — do NOT exclude solely on this):
+- Gmail-Category is CATEGORY_PROMOTIONS  →  likely marketing; still check Step 2.
+- Gmail-Category is CATEGORY_SOCIAL  →  likely social notification; still check Step 2.
+
+NEUTRAL (proceed to Step 2):
+- Gmail-Category is CATEGORY_UPDATES, CATEGORY_FORUMS, CATEGORY_UNKNOWN, or none.
+- Gmail-Important: no with no category signal.
+
+{_SHARED_STEPS_2_3_AND_OUTPUT}"""
+
+_OUTLOOK_SUMMARIZER_PROMPT = f"""\
+You are an executive assistant that extracts actionable items from emails.
+Each email is provided with Outlook metadata (Outlook-Importance, Outlook-Flag, \
+Outlook-Classification, Outlook-Categories) in addition to the sender, subject, and body.
+
+Process each email through the three steps below IN ORDER. Stop at the first \
+step that makes a decision.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 1 — Outlook signal pre-filter
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Use Outlook's own metadata as the first signal before reading the content:
+
+IMMEDIATE INCLUDE (go straight to output, skip Steps 2 & 3):
+- Outlook-Importance: high  →  sender marked this as high importance; always include.
+- Outlook-Flag: flagged  →  user flagged it for follow-up; always include.
+- Outlook-Classification: focused  →  Outlook's Focused Inbox identified this as important; always include.
+
+LEAN EXCLUDE (proceed to Step 2 to confirm — do NOT exclude solely on this):
+- Outlook-Classification: other  →  Outlook sorted it to Other inbox; still check Step 2.
+
+NEUTRAL (proceed to Step 2):
+- Outlook-Importance: normal or low with no other signal.
+- Outlook-Flag: notFlagged with no classification signal.
+
+{_SHARED_STEPS_2_3_AND_OUTPUT}"""
 
 
 _COL_WIDTHS: dict[str, str] = {
@@ -461,17 +547,24 @@ def _publish_progress(email: str, title: str, detail: str = "") -> None:
 
 async def run_summarizer(email: str, messages_to_process: list[dict]) -> None:
     """
-    Background task: summarize the given messages, create a Gmail draft,
+    Background task: summarize the given messages, create a draft (Gmail or Outlook),
     and notify the frontend via SSE.
     """
     user_id = email_to_user_id(email)
     n = len(messages_to_process)
-    logger.info("EmailSummarizer | processing %d email(s) for %s", n, email)
+    is_gmail = _is_gmail(email)
+    provider = "Gmail" if is_gmail else "Outlook"
+    logger.info("EmailSummarizer | processing %d email(s) for %s (%s)", n, email, provider)
+
+    # Select provider-specific prompt, formatter, and draft tool
+    system_prompt = _GMAIL_SUMMARIZER_PROMPT if is_gmail else _OUTLOOK_SUMMARIZER_PROMPT
+    format_fn = _format_emails_gmail if is_gmail else _format_emails_outlook
+    draft_tool = "GMAIL_CREATE_EMAIL_DRAFT" if is_gmail else "OUTLOOK_CREATE_DRAFT"
 
     try:
         # 1. Build prompt text for Claude
         _publish_progress(email, f"🔍 Analysing {n} email{'s' if n != 1 else ''}…", "Extracting action items with AI")
-        email_text = _format_emails(messages_to_process)
+        email_text = format_fn(messages_to_process)
 
         # 2. Ask Claude to extract action items
         _publish_progress(email, f"🤖 AI processing {n} email{'s' if n != 1 else ''}…", "Claude is identifying action items")
@@ -488,7 +581,7 @@ async def run_summarizer(email: str, messages_to_process: list[dict]) -> None:
                     client.messages.create,
                     model=settings.email_summarizer_model_name,
                     max_tokens=settings.email_summarizer_max_tokens,
-                    system=_SYSTEM_PROMPT,
+                    system=system_prompt,
                     messages=[
                         {"role": "user", "content": f"Here are my latest unread emails:\n\n{email_text}"}
                     ],
@@ -518,13 +611,14 @@ async def run_summarizer(email: str, messages_to_process: list[dict]) -> None:
             f"| Emails scanned | {n} |\n"
             f"| Lookback period | Last {settings.email_lookback_days} days |\n"
             f"| Summariser mode | {settings.email_summarizer_mode} |\n"
+            f"| Provider | {provider} |\n"
             f"| Inclusion rule | {INCLUSION_RULE_SUMMARY} |\n"
             f"| Exclusion rule | {EXCLUSION_RULE_SUMMARY} |\n"
         )
         action_items = action_items + stats_block
 
-        # 3. Create Gmail draft with a unique subject
-        _publish_progress(email, "✍️ Saving draft to Gmail…", "Creating action items draft")
+        # 3. Create draft with a unique subject
+        _publish_progress(email, f"✍️ Saving draft to {provider}…", "Creating action items draft")
         uid = str(uuid.uuid4())[:8].upper()
         today_str = date.today().strftime("%Y-%m-%d")
         subject = f"[ACTION-ITEMS-{today_str}-{uid}]"
@@ -535,22 +629,33 @@ async def run_summarizer(email: str, messages_to_process: list[dict]) -> None:
             f'📋 Email Action Summary — {date.today().strftime("%d %b %Y")}</h2>'
             f'<p style="margin:2px 0;color:#555">'
             f'Scanned: {len(messages_to_process)} email(s) &nbsp;·&nbsp; '
-            f'Mode: {settings.email_summarizer_mode}</p>'
+            f'Mode: {settings.email_summarizer_mode} &nbsp;·&nbsp; '
+            f'Provider: {provider}</p>'
             f'<hr style="border:none;border-top:2px solid #4a90d9;margin:10px 0 0">'
             f'</div>'
         )
         draft_body = header_html + _md_to_html(action_items)
 
-        await asyncio.to_thread(
-            execute_tool,
-            user_id=user_id,
-            tool_name="GMAIL_CREATE_EMAIL_DRAFT",
-            tool_input={
+        # Build draft tool input — Gmail and Outlook use different field names
+        if is_gmail:
+            draft_input = {
                 "recipient_email": email,
                 "subject": subject,
                 "body": draft_body,
                 "is_html": True,
-            },
+            }
+        else:
+            draft_input = {
+                "subject": subject,
+                "body": draft_body,
+                "content_type": "HTML",
+            }
+
+        await asyncio.to_thread(
+            execute_tool,
+            user_id=user_id,
+            tool_name=draft_tool,
+            tool_input=draft_input,
         )
 
         # 4. In smart mode, record the processed IDs
@@ -618,6 +723,17 @@ def _two_week_fetch_input() -> dict:
     }
 
 
+def _outlook_fetch_input() -> dict:
+    """Build OUTLOOK_LIST_MESSAGES tool input scoped to unread emails in the last 14 days."""
+    since = (date.today() - timedelta(days=settings.email_lookback_days)).isoformat()
+    return {
+        "is_read": False,
+        "received_date_time_ge": since,
+        "top": settings.email_fetch_limit,
+        "select": "id,subject,from,bodyPreview,body,importance,flag,inferenceClassification,categories,receivedDateTime",
+    }
+
+
 async def _fetch_and_run(email: str, mode: str) -> None:
     """Fetch emails then summarize. Runs as a background asyncio task so the
     route handler returns immediately after the processing event is published."""
@@ -625,15 +741,26 @@ async def _fetch_and_run(email: str, mode: str) -> None:
     # chat message over the shared TPM budget.
     await asyncio.sleep(20)
     user_id = email_to_user_id(email)
+    is_gmail = _is_gmail(email)
+    provider = "Gmail" if is_gmail else "Outlook"
+
+    # Select provider-specific fetch tool and input
+    if is_gmail:
+        fetch_tool = "GMAIL_FETCH_EMAILS"
+        fetch_input = _two_week_fetch_input()
+    else:
+        fetch_tool = "OUTLOOK_LIST_MESSAGES"
+        fetch_input = _outlook_fetch_input()
+
     try:
-        _publish_progress(email, "📬 Fetching emails…", "Connecting to Gmail inbox")
+        _publish_progress(email, "📬 Fetching emails…", f"Connecting to {provider} inbox")
         # run_in_thread keeps the event loop free so SSE progress events are
         # delivered immediately rather than bunching up after the blocking call
         raw = await asyncio.to_thread(
             execute_tool,
             user_id=user_id,
-            tool_name="GMAIL_FETCH_EMAILS",
-            tool_input=_two_week_fetch_input(),
+            tool_name=fetch_tool,
+            tool_input=fetch_input,
         )
         messages = _extract_messages(raw)
         if messages:
@@ -652,7 +779,7 @@ async def _fetch_and_run(email: str, mode: str) -> None:
         publish(email, {
             "type": "agent_complete",
             "title": "📭 No unread emails",
-            "body": "Your inbox is clear for the last 2 weeks.",
+            "body": f"Your {provider} inbox is clear for the last {settings.email_lookback_days} days.",
         })
         return
 

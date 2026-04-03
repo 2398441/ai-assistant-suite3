@@ -48,6 +48,7 @@ export async function getAuthStatus(email: string): Promise<{
   connected: boolean;
   gmail_connected: boolean;
   calendar_connected: boolean;
+  outlook_connected: boolean;
   email?: string;
   session_token?: string;
 }> {
@@ -55,7 +56,7 @@ export async function getAuthStatus(email: string): Promise<{
     `${API_URL}/api/auth/status/${encodeURIComponent(email)}`
   );
   if (!res.ok)
-    return { connected: false, gmail_connected: false, calendar_connected: false };
+    return { connected: false, gmail_connected: false, calendar_connected: false, outlook_connected: false };
   const data = await res.json();
   if (data.session_token) storeSessionToken(data.session_token);
   return data;

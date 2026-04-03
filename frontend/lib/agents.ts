@@ -86,4 +86,21 @@ export const AGENT_META: Record<AgentType, { icon: string; label: string; colors
       activeBadgeBorder:  "border-blue-200",
     },
   },
+  outlook: {
+    icon:  "📬",
+    label: "Outlook",
+    colors: {
+      accent:             "text-teal-600",
+      dot:                "bg-teal-500",
+      ring:               "bg-teal-600",
+      selectorBtn:        "bg-teal-50 text-teal-700 border-teal-200 hover:bg-teal-100",
+      badge:              "bg-teal-50 text-teal-600 border-teal-200",
+      cardBorder:         "border-teal-200",
+      cardHeaderBg:       "bg-teal-50",
+      cardHeaderBorderB:  "border-teal-200",
+      activeBadgeBg:      "bg-teal-100",
+      activeBadgeText:    "text-teal-700",
+      activeBadgeBorder:  "border-teal-200",
+    },
+  },
 };

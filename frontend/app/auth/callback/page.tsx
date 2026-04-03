@@ -13,16 +13,25 @@ import {
   STORAGE_KEY_PENDING_EMAIL,
 } from "@/lib/constants";
 
+function isGmailAddress(addr: string): boolean {
+  const domain = addr.split("@")[1]?.toLowerCase() ?? "";
+  return domain === "gmail.com" || domain === "googlemail.com";
+}
+
 /**
- * After Google OAuth, Composio redirects the user here.
+ * After OAuth, Composio redirects the user here.
  *
- * Sequential OAuth flow:
+ * Gmail flow (sequential):
  *   1. Gmail OAuth completes → we land here.
  *   2. Poll /api/auth/status until gmail_connected=true.
  *   3. If calendar_connected=false, call /api/auth/initiate with agent_type="calendar"
  *      and redirect to the Calendar OAuth URL.
  *   4. Calendar OAuth completes → we land here again.
  *   5. Poll until both gmail_connected AND calendar_connected → go to chat.
+ *
+ * Outlook flow (single step):
+ *   1. Outlook OAuth completes → we land here.
+ *   2. Poll /api/auth/status until outlook_connected=true → go to chat.
  */
 export default function AuthCallback() {
   const router = useRouter();
@@ -41,6 +50,7 @@ export default function AuthCallback() {
       return;
     }
 
+    const isGmail = isGmailAddress(email);
     let cancelled = false;
 
     async function initiateCalendarAuth() {
@@ -49,7 +59,6 @@ export default function AuthCallback() {
         const result = await initiateAuth(email!, callbackUrl, "calendar");
         if (cancelled) return;
         if (result.connected) {
-          // Calendar already connected — go straight to chat
           finish();
         } else if (result.auth_url) {
           setStatus("Connecting Google Calendar…");
@@ -77,15 +86,23 @@ export default function AuthCallback() {
         const result = await getAuthStatus(email!);
         if (cancelled) return;
 
-        if (result.gmail_connected && result.calendar_connected) {
-          finish();
-          return;
-        }
-
-        if (result.gmail_connected && !result.calendar_connected) {
-          setStatus("Gmail connected. Connecting Google Calendar…");
-          await initiateCalendarAuth();
-          return;
+        if (isGmail) {
+          // Gmail flow: need both gmail + calendar
+          if (result.gmail_connected && result.calendar_connected) {
+            finish();
+            return;
+          }
+          if (result.gmail_connected && !result.calendar_connected) {
+            setStatus("Gmail connected. Connecting Google Calendar…");
+            await initiateCalendarAuth();
+            return;
+          }
+        } else {
+          // Outlook flow: only need outlook
+          if (result.outlook_connected) {
+            finish();
+            return;
+          }
         }
 
         setAttempts((a) => {
@@ -94,11 +111,15 @@ export default function AuthCallback() {
             setStatus("Connection timed out. Please try again.");
             return next;
           }
-          setStatus(
-            result.gmail_connected
-              ? "Waiting for Calendar connection…"
-              : "Waiting for Gmail connection…"
-          );
+          if (isGmail) {
+            setStatus(
+              result.gmail_connected
+                ? "Waiting for Calendar connection…"
+                : "Waiting for Gmail connection…"
+            );
+          } else {
+            setStatus("Waiting for Outlook connection…");
+          }
           setTimeout(poll, AUTH_POLL_INTERVAL_MS);
           return next;
         });

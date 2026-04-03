@@ -13,6 +13,8 @@ interface MessageInputProps {
   disabled?: boolean;
   /** When set, populates the textarea for user review before sending. */
   suggestion?: { text: string; label: string; collapsed: boolean; seq: number };
+  /** Which agents to show in the selector. Defaults to all AGENT_META keys. */
+  availableAgents?: AgentType[];
 }
 
 
@@ -103,7 +105,9 @@ export function MessageInput({
   onAgentChange,
   disabled,
   suggestion,
+  availableAgents,
 }: MessageInputProps) {
+  const agentKeys = availableAgents ?? (Object.keys(AGENT_META) as AgentType[]);
   const [value, setValue] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const isCollapsed  = useRef(false);
@@ -217,7 +221,7 @@ export function MessageInput({
       {/* Agent selector */}
       <div className="flex items-center gap-1.5">
         <span className="text-[11px] text-gray-400 mr-1">Sending to:</span>
-        {(Object.keys(AGENT_META) as AgentType[]).map((type) => (
+        {agentKeys.map((type) => (
           <button
             key={type}
             onClick={() => onAgentChange(type)}

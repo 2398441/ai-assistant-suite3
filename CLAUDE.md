@@ -15,7 +15,7 @@ Developer configuration file — provides codebase architecture reference and de
 
 ## What This Project Is
 
-A full-stack intelligent assistant that lets users interact with their Gmail and Google Calendar via natural language. An LLM API (default: `claude-opus-4-6`) acts as the reasoning engine; Composio handles Google OAuth and provides pre-built tool definitions for Gmail and Google Calendar actions.
+A full-stack intelligent assistant that lets users interact with their Gmail, Google Calendar, and Microsoft Outlook via natural language. An LLM API (default: `claude-opus-4-6`) acts as the reasoning engine; Composio handles OAuth (Google and Microsoft) and provides pre-built tool definitions for Gmail, Google Calendar, and Outlook actions. The system auto-detects the email provider at login: `@gmail.com`/`@googlemail.com` → Google Workspace agents; all other domains → Outlook agent.
 
 ---
 
@@ -33,12 +33,12 @@ ai-assistant-suite3/
 │   │   ├── models/
 │   │   │   └── schemas.py            # Pydantic request/response models (incl. trigger schemas)
 │   │   ├── core/
-│   │   │   ├── agent.py              # Streaming agentic loop (SSE); tri-agent system prompts
-│   │   │   ├── composio_client.py    # Composio v1: tool fetch/execute + trigger enable/disable
+│   │   │   ├── agent.py              # Streaming agentic loop (SSE); four-agent system prompts
+│   │   │   ├── composio_client.py    # Composio v1: tool fetch/execute + trigger enable/disable + provider-aware profile fetchers
 │   │   │   ├── email_summarizer.py   # Login-triggered email action-item summariser
 │   │   │   ├── history_store.py      # TinyDB chat history persistence (data/history_store.json)
 │   │   │   ├── notifier.py           # Twilio WhatsApp: send_whatsapp() + format_trigger_message()
-│   │   │   ├── profile_store.py      # TinyDB persistent profile cache (data/profile_cache.json)
+│   │   │   ├── profile_store.py      # TinyDB persistent profile cache with provider segregation (data/profile_cache.json)
 │   │   │   ├── session_store.py      # In-memory session store keyed by email; restores history on create
 │   │   │   ├── token_store.py        # TinyDB session token store (data/token_store.json)
 │   │   │   └── trigger_store.py      # In-memory per-user asyncio.Queue fanout for SSE delivery
@@ -57,10 +57,10 @@ ai-assistant-suite3/
 │   │   ├── page.tsx                  # Main page: auth gate + chat layout + resizable sidebar + TriggerToast
 │   │   └── auth/
 │   │       └── callback/
-│   │           └── page.tsx          # Google OAuth return handler
+│   │           └── page.tsx          # Google/Microsoft OAuth return handler
 │   ├── components/
 │   │   ├── Auth/
-│   │   │   └── ConnectButton.tsx     # Email input + Google connect form
+│   │   │   └── ConnectButton.tsx     # Email input + Google/Microsoft connect form (auto-detects provider)
 │   │   ├── Chat/
 │   │   │   ├── ChatWindow.tsx        # Scrollable message list + personalised empty state
 │   │   │   ├── MessageBubble.tsx     # Renders user/assistant bubbles + markdown tables
@@ -77,7 +77,7 @@ ai-assistant-suite3/
 │   │   └── Settings/
 │   │       └── SettingsPanel.tsx     # Slide-in panel: view + update backend .env vars from UI
 │   └── lib/
-│       ├── agents.ts                 # AGENT_META map + AgentColors tokens (workspace/gmail/calendar)
+│       ├── agents.ts                 # AGENT_META map + AgentColors tokens (workspace/gmail/calendar/outlook)
 │       ├── api.ts                    # All backend fetch calls + SSE async generator + token management
 │       ├── constants.ts              # Frontend magic values (timeouts, limits, storage keys, URLs)
 │       ├── icons.ts                  # autoIcon() — derives emoji from trigger/action name via regex
@@ -108,6 +108,7 @@ npm run dev                            # frontend :3000  backend :8000
 ```
 
 `backend/.env` required keys: `ANTHROPIC_API_KEY`, `COMPOSIO_API_KEY`, `GMAIL_AUTH_CONFIG_ID`, `CALENDAR_AUTH_CONFIG_ID`.
+Optional: `OUTLOOK_AUTH_CONFIG_ID` (for Microsoft Outlook users).
 Optional: `TWILIO_ACCOUNT_SID` + `TWILIO_AUTH_TOKEN` + `TWILIO_WHATSAPP_FROM` (WhatsApp notifications — see [README → WhatsApp Notifications](./README.md#whatsapp-notifications)).
 
 ### Quick reference (production rebuild)
@@ -128,7 +129,7 @@ bash fn2.sh          # frontend + npm install — new Node packages
 
 ### Auth & session flow
 
-1. User enters Gmail address → `POST /api/auth/initiate`
+1. User enters email address (Gmail or any other) → `POST /api/auth/initiate` with `agent_type: "gmail"` or `"outlook"` based on domain
 2. Backend derives a Composio `user_id` from the email via `re.sub(r'[^a-zA-Z0-9_-]', '_', email.lower())`
 3. Checks existing Composio connections → if active, returns `{connected: true, session_token: "<token>"}` and chat opens
 4. Otherwise returns `{auth_url: "..."}` → frontend redirects user to Google OAuth
@@ -139,15 +140,17 @@ bash fn2.sh          # frontend + npm install — new Node packages
 
 Sessions are **email-keyed** in-memory. Session tokens and chat history persist across backend restarts (TinyDB).
 
-### Three subagents (`backend/app/core/agent.py`)
+### Four subagents (`backend/app/core/agent.py`)
 
-`agent_type: "gmail" | "calendar" | "workspace"` is sent with every chat message and controls three things:
+`agent_type: "gmail" | "calendar" | "workspace" | "outlook"` is sent with every chat message and controls three things:
 
-| What | Gmail | Calendar | Workspace |
-|---|---|---|---|
-| Composio toolkit loaded | `["gmail", "googlecontacts"]` (dynamic) | 10 calendar tools + contacts | 11 Gmail tools + 10 calendar tools (explicit lists) |
-| System prompt | `GMAIL_SYSTEM_PROMPT` | `CALENDAR_SYSTEM_PROMPT` | `WORKSPACE_SYSTEM_PROMPT` |
-| Conversation history | `session.gmail_messages` | `session.calendar_messages` | `session.workspace_messages` |
+| What | Gmail | Calendar | Workspace | Outlook |
+|---|---|---|---|---|
+| Provider | Google | Google | Google | Microsoft |
+| Composio toolkit | `["gmail", "googlecontacts"]` | 10 calendar tools + contacts | 11 Gmail + 10 calendar (21 total) | 31 curated Outlook tools |
+| System prompt | `GMAIL_SYSTEM_PROMPT` | `CALENDAR_SYSTEM_PROMPT` | `WORKSPACE_SYSTEM_PROMPT` | `OUTLOOK_SYSTEM_PROMPT` |
+| History | `session.gmail_messages` | `session.calendar_messages` | `session.workspace_messages` | `session.outlook_messages` |
+| Available to | Gmail users | Gmail users | Gmail users | Non-Gmail users |
 
 Each agent has its own isolated history stored in the `Session` dataclass; clearing one does not affect the other.
 
@@ -158,7 +161,7 @@ The **workspace** agent is a superset — it receives 11 curated Gmail tools (`_
 **Agent loop**:
 
 ```
-User message + agent_type  ("gmail" | "calendar" | "workspace")
+User message + agent_type  ("gmail" | "calendar" | "workspace" | "outlook")
   → fetch Composio toolkit for agent_type
   → inject send_whatsapp_notification custom tool
   → LLM stream  (model=claude-opus-4-6, thinking={type:"adaptive"})
@@ -305,14 +308,18 @@ Shared zero-dependency renderer used by `MessageBubble.tsx` (and any other consu
 
 ### Persistent profile cache (`core/profile_store.py`)
 
-TinyDB store at `backend/data/profile_cache.json`. Survives backend restarts — on the first request after a restart, sessions auto-restore cached display name, timezone, locale, calendars, and frequent contacts without re-fetching from Google APIs.
+TinyDB store at `backend/data/profile_cache.json` with provider segregation (`"gmail"` or `"outlook"`). Survives backend restarts — on the first request after a restart, sessions auto-restore cached display name, timezone, locale, calendars, and frequent contacts without re-fetching from provider APIs.
 
-- `save_profile(email, display_name, profile)` — called in `preload_session`, `get_greeting`, and `stream_agent_response` (fallback)
-- `load_profile(email)` → `(display_name, profile, fetched_at)` — called in `SessionStore.get_or_create()`
+- `save_profile(email, display_name, profile, provider)` — called in `preload_session`, `get_greeting`, and `stream_agent_response` (fallback)
+- `load_profile(email)` → `(display_name, profile, fetched_at, provider)` — called in `SessionStore.get_or_create()`
+
+Profile data is fetched from provider-specific APIs:
+- **Gmail**: `GMAIL_GET_PROFILE`, `GOOGLECALENDAR_SETTINGS_LIST`, `GOOGLECALENDAR_LIST_CALENDARS`, `GOOGLECONTACTS_LIST_CONTACTS`, `GOOGLECALENDAR_GET_CURRENT_DATE_TIME`
+- **Outlook**: `OUTLOOK_GET_MAILBOX_SETTINGS` (fetched first for timezone; Windows TZ → IANA conversion), `OUTLOOK_GET_PROFILE`, `OUTLOOK_LIST_CALENDARS`, `OUTLOOK_LIST_USER_CONTACTS`, then local `current_datetime` computation via `zoneinfo`
 
 ### Frequent contacts in profile block
 
-`_fetch_frequent_contacts()` in `composio_client.py` calls `GOOGLECONTACTS_LIST_CONTACTS` via Composio and stores the result as `profile["frequent_contacts"]`. `_build_profile_block()` renders these into the system prompt under a "Frequent Contacts" section. Agents are instructed to match by name from this list before calling any `GOOGLECONTACTS_*` Composio tool — reducing unnecessary API calls for common contacts.
+Frequent contacts are fetched from the appropriate provider: `GOOGLECONTACTS_LIST_CONTACTS` for Gmail users, `OUTLOOK_LIST_USER_CONTACTS` for Outlook users (includes phone numbers). `_build_profile_block()` renders these into the system prompt under a "Frequent Contacts" section with provider-aware instructions — Gmail agents check contacts before calling `GOOGLECONTACTS_*`; Outlook agents check before calling `OUTLOOK_LIST_USER_CONTACTS`.
 
 ### localStorage version keys
 
@@ -330,8 +337,8 @@ Quick-action defaults are cached under `quick_actions_gmail_vN` / `quick_actions
 
 | Method | Path | Description |
 |---|---|---|
-| POST | `/api/auth/initiate` | Start Google OAuth or confirm existing connection. Returns `session_token` when connected. |
-| GET  | `/api/auth/status/{email}` | Poll connection status. Returns `session_token` when connected. |
+| POST | `/api/auth/initiate` | Start Google/Microsoft OAuth or confirm existing connection. Returns `session_token` when connected. |
+| GET  | `/api/auth/status/{email}` | Poll connection status (Gmail+Calendar or Outlook). Returns `session_token` when connected. |
 | POST | `/api/auth/logout` | Revoke token `{email}` |
 | POST | `/api/chat/message` | Send `{email, message, agent_type, session_token}`, returns SSE stream |
 | POST | `/api/chat/clear` | Clear history `{email, agent_type?, session_token}` |

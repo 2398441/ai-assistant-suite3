@@ -16,10 +16,12 @@ class Session:
     gmail_messages:     list[dict[str, Any]] = field(default_factory=list)
     calendar_messages:  list[dict[str, Any]] = field(default_factory=list)
     workspace_messages: list[dict[str, Any]] = field(default_factory=list)
+    outlook_messages:   list[dict[str, Any]] = field(default_factory=list)
     # Cached system prompts — built once on the first call per subagent
     gmail_system_prompt:     Optional[str] = None
     calendar_system_prompt:  Optional[str] = None
     workspace_system_prompt: Optional[str] = None
+    outlook_system_prompt:   Optional[str] = None
     # Display name fetched once from the SENT folder From header
     display_name: Optional[str] = None
     # User profile fetched once on auth (timezone, locale, calendars, etc.)
@@ -35,6 +37,8 @@ class Session:
             return self.gmail_system_prompt
         if agent_type == "workspace":
             return self.workspace_system_prompt
+        if agent_type == "outlook":
+            return self.outlook_system_prompt
         return self.calendar_system_prompt
 
     def set_system_prompt(self, agent_type: str, prompt: str) -> None:
@@ -42,6 +46,8 @@ class Session:
             self.gmail_system_prompt = prompt
         elif agent_type == "workspace":
             self.workspace_system_prompt = prompt
+        elif agent_type == "outlook":
+            self.outlook_system_prompt = prompt
         else:
             self.calendar_system_prompt = prompt
 
@@ -50,6 +56,8 @@ class Session:
             return self.gmail_messages
         if agent_type == "workspace":
             return self.workspace_messages
+        if agent_type == "outlook":
+            return self.outlook_messages
         return self.calendar_messages
 
     def set_messages(self, agent_type: str, messages: list[dict[str, Any]]) -> None:
@@ -57,6 +65,8 @@ class Session:
             self.gmail_messages = messages
         elif agent_type == "workspace":
             self.workspace_messages = messages
+        elif agent_type == "outlook":
+            self.outlook_messages = messages
         else:
             self.calendar_messages = messages
 
@@ -68,6 +78,8 @@ class Session:
             self.calendar_messages = []
         if agent_type is None or agent_type == "workspace":
             self.workspace_messages = []
+        if agent_type is None or agent_type == "outlook":
+            self.outlook_messages = []
 
 
 class SessionStore:
@@ -79,7 +91,7 @@ class SessionStore:
         with self._lock:
             if email not in self._sessions:
                 wa_number, wa_enabled = load_wa_settings(email)
-                display_name, profile, fetched_at = load_profile(email)
+                display_name, profile, fetched_at, _provider = load_profile(email)
                 session = Session(
                     email=email,
                     whatsapp_number=wa_number,
@@ -89,7 +101,7 @@ class SessionStore:
                     profile_fetched_at=fetched_at,
                 )
                 # Restore persisted conversation history (survives backend restarts)
-                for agent_type in ("gmail", "calendar", "workspace"):
+                for agent_type in ("gmail", "calendar", "workspace", "outlook"):
                     msgs = load_history(email, agent_type)
                     if msgs:
                         session.set_messages(agent_type, msgs)

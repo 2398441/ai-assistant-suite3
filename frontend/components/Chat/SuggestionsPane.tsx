@@ -25,6 +25,8 @@ interface SuggestionsPaneProps {
   disabled?: boolean;
   /** Used only for the status dot / "1 new" badge — toast renders separately in page.tsx */
   notification?: NotificationItem | null;
+  /** Which agents to show. Defaults to ["workspace","gmail","calendar"] for Gmail users. */
+  availableAgents?: AgentType[];
 }
 
 // ── Defaults — icons derived automatically via autoIcon() ─────────────────────
@@ -63,12 +65,27 @@ const CALENDAR_DEFAULTS: Suggestion[] = [
   { id: "c6", label: "Schedule Meeting",      text: "Schedule a 30-minute meeting with my team next week and send invites" },
 ].map(s => ({ ...s, icon: autoIcon(s.label, s.text) }));
 
+const OUTLOOK_DEFAULTS: Suggestion[] = [
+  { id: "o0", label: "My Outlook Features",   text: "Provide concise summary of the tools I have access to including custom ones?" },
+  { id: "o1", label: "Inbox Digest",           text: "Summarise my emails from the last 2 business days" },
+  { id: "o2", label: "Awaiting Reply",         text: "Find emails where I haven't replied in over 3 business days" },
+  { id: "o3", label: "Urgent & Flagged",       text: "Show emails marked urgent or flagged by my team" },
+  { id: "o4", label: "Draft Follow-up",        text: "Draft a follow-up email for my most recent unanswered thread" },
+  { id: "o5", label: "Today's Schedule",       text: "What events do I have on my Outlook calendar for today?" },
+  { id: "o6", label: "Schedule & Meet",         text: "Schedule a meeting with a colleague, and perform necessary actions on conflicts." },
+  { id: "o7", label: "Find Free Slots",        text: "Find me a free 30-minute slot this week for a meeting" },
+  { id: "o8", label: "Organise Inbox",         text: "Help me identify emails I can move to folders to clean up my inbox" },
+  { id: "o9", label: "Create Contact",         text: "Create a new contact in my Outlook contacts" },
+  { id: "o10", label: "Share Action Items - WhatsApp (via Twilio)", text: "Find my latest Outlook draft with ACTION-ITEMS in the subject. Show me the draft subject and the action items inside it. Then ask me: (1) which items I'd like to share — all or specific ones, and (2) who I want to send them to. Look up the recipient's WhatsApp or mobile number from my Outlook Contacts and send the selected items via WhatsApp." },
+].map(s => ({ ...s, icon: autoIcon(s.label, s.text) }));
+
 // Stable keys — no version suffix needed. Merge logic (see AgentSection) ensures
 // new defaults are appended automatically without a hard reload.
 const STORAGE_KEYS: Record<AgentType, string> = {
   gmail:     "quick_actions_gmail",
   calendar:  "quick_actions_calendar",
   workspace: "quick_actions_workspace",
+  outlook:   "quick_actions_outlook",
 };
 
 // ICON_PALETTE is imported from @/lib/icons
@@ -76,12 +93,15 @@ const STORAGE_KEYS: Record<AgentType, string> = {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
+const DEFAULT_AGENTS: AgentType[] = ["workspace", "gmail", "calendar"];
+
 export function SuggestionsPane({
   onSuggestion,
   activeAgent,
   onAgentChange,
   disabled,
   notification,
+  availableAgents = DEFAULT_AGENTS,
 }: SuggestionsPaneProps) {
   return (
     <aside className="flex-1 min-h-0 bg-white flex flex-col overflow-hidden">
@@ -103,39 +123,25 @@ export function SuggestionsPane({
         {/* Scrollable area holding all agent cards */}
         <div className="flex-1 min-h-0 overflow-y-auto px-3 pb-3 flex flex-col gap-2">
 
-          {/* ── Workspace Agent card ──────────────────────────────────── */}
-          <AgentSection
-            agentType="workspace"
-            isActive={activeAgent === "workspace"}
-            onActivate={() => onAgentChange("workspace")}
-            onSuggestion={(text, label, isDefault) => onSuggestion(text, "workspace", label, isDefault)}
-            disabled={!!disabled}
-          />
-
-          {/* ── Gmail Agent card ─────────────────────────────────────── */}
-          <AgentSection
-            agentType="gmail"
-            isActive={activeAgent === "gmail"}
-            onActivate={() => onAgentChange("gmail")}
-            onSuggestion={(text, label, isDefault) => onSuggestion(text, "gmail", label, isDefault)}
-            disabled={!!disabled}
-          />
-
-          {/* ── Calendar Agent card ───────────────────────────────────── */}
-          <AgentSection
-            agentType="calendar"
-            isActive={activeAgent === "calendar"}
-            onActivate={() => onAgentChange("calendar")}
-            onSuggestion={(text, label, isDefault) => onSuggestion(text, "calendar", label, isDefault)}
-            disabled={!!disabled}
-          />
+          {availableAgents.map((agent) => (
+            <AgentSection
+              key={agent}
+              agentType={agent}
+              isActive={activeAgent === agent}
+              onActivate={() => onAgentChange(agent)}
+              onSuggestion={(text, label, isDefault) => onSuggestion(text, agent, label, isDefault)}
+              disabled={!!disabled}
+            />
+          ))}
 
         </div>
       </div>
 
       {/* ── Footer ───────────────────────────────────────────────────── */}
       <div className="px-4 py-3 border-t border-gray-100 shrink-0">
-        <p className="text-[10px] text-gray-300">Gmail &amp; Calendar Assistant</p>
+        <p className="text-[10px] text-gray-300">
+          {availableAgents.includes("outlook") ? "Outlook Assistant" : "Gmail & Calendar Assistant"}
+        </p>
       </div>
     </aside>
   );
@@ -262,7 +268,7 @@ function AgentSection({
   onSuggestion: (text: string, label: string, isDefault: boolean) => void;
   disabled: boolean;
 }) {
-  const defaults = agentType === "gmail" ? GMAIL_DEFAULTS : agentType === "workspace" ? WORKSPACE_DEFAULTS : CALENDAR_DEFAULTS;
+  const defaults = agentType === "gmail" ? GMAIL_DEFAULTS : agentType === "workspace" ? WORKSPACE_DEFAULTS : agentType === "outlook" ? OUTLOOK_DEFAULTS : CALENDAR_DEFAULTS;
   const colors = AGENT_META[agentType].colors;
 
   const [suggestions, setSuggestions] = useState<Suggestion[]>(defaults);

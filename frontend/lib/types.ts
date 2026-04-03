@@ -1,5 +1,5 @@
 export type MessageRole = "user" | "assistant" | "system";
-export type AgentType = "gmail" | "calendar" | "workspace";
+export type AgentType = "gmail" | "calendar" | "workspace" | "outlook";
 
 export interface NotificationItem {
   id: string;

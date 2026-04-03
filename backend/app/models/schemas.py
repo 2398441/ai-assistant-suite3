@@ -5,7 +5,7 @@ from typing import Optional
 class AuthInitiateRequest(BaseModel):
     email: str
     callback_url: Optional[str] = None
-    agent_type: str = "gmail"  # "gmail" | "calendar" — selects the auth config
+    agent_type: str = "gmail"  # "gmail" | "calendar" | "outlook" — selects the auth config
 
 
 class AuthInitiateResponse(BaseModel):
@@ -15,14 +15,15 @@ class AuthInitiateResponse(BaseModel):
 
 
 class AuthStatusResponse(BaseModel):
-    connected: bool           # True only when BOTH gmail + calendar are connected
+    connected: bool           # Gmail users: gmail AND calendar; Outlook users: outlook only
     gmail_connected: bool = False
     calendar_connected: bool = False
+    outlook_connected: bool = False
     email: Optional[str] = None
     session_token: Optional[str] = None   # present when connected=True
 
 
-AgentType = str  # "gmail" | "calendar" | "workspace"
+AgentType = str  # "gmail" | "calendar" | "workspace" | "outlook"
 
 
 class ChatMessageRequest(BaseModel):

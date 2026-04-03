@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     composio_api_key: str
     gmail_auth_config_id: str
     calendar_auth_config_id: str
+    outlook_auth_config_id: str = ""
     frontend_url: str = "http://localhost:3000"
 
     # ── Agent limits ──────────────────────────────────────────────────────────

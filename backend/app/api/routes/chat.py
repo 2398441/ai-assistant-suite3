@@ -52,7 +52,7 @@ async def chat_message(request: ChatMessageRequest):
     msg = request.message.strip()
     agent_type = request.agent_type
 
-    if agent_type in ("gmail", "calendar", "workspace"):
+    if agent_type in ("gmail", "calendar", "workspace", "outlook"):
         stream = stream_agent_response(session, msg, agent_type)
     else:
         stream = stream_agent_response(session, msg, "workspace")

@@ -28,3 +28,4 @@ logs/
 
 # Runtime data (user sessions, history, tokens — never commit)
 backend/data/*.json
+.claude/
