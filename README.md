@@ -591,7 +591,7 @@ Triggered on every user login (configurable via `EMAIL_SUMMARIZER_MODE`) for bot
 6. Reorders Claude's output to guarantee section order: **Actionable Items → Email Reference → Additional Notes**
 7. Appends a backend-generated **Summary Statistics** table (emails scanned, lookback period, mode, provider, inclusion/exclusion rules)
 8. Saves result as an HTML-formatted draft in the user's provider (`GMAIL_CREATE_EMAIL_DRAFT` or `OUTLOOK_CREATE_DRAFT`)
-9. Publishes an `agent_complete` event — replaces the processing indicator with real results
+9. Publishes an `agent_complete` event (includes `provider: "Gmail" | "Outlook"`) — replaces the processing indicator with real results; the draft link opens the correct mailbox ("Open in Gmail →" or "Open in Outlook →")
 
 On page reload, stale `is_processing` notifications are filtered out of localStorage automatically (they can never resolve after a reload).
 
@@ -725,7 +725,7 @@ Profile data is fetched from provider-specific APIs:
 WhatsApp notifications are delivered in three ways:
 
 1. **Trigger events** — when Composio fires a webhook (new email, calendar change), the backend forwards a formatted message to the user's WhatsApp number (fire-and-forget)
-2. **Email action summary** — after the login summariser creates a Gmail draft, the action-item table is sent to WhatsApp in parallel
+2. **Email action summary** — after the login summariser creates a draft in the user's mailbox (Gmail or Outlook), the action-item table can be sent to WhatsApp on explicit request
 3. **On-demand from agents** — any agent can call the built-in `send_whatsapp_notification` tool when asked to notify you
 
 ### Setup

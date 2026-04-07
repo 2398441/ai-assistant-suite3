@@ -673,6 +673,7 @@ async def run_summarizer(email: str, messages_to_process: list[dict]) -> None:
             email_count=len(messages_to_process),
             timestamp=datetime.now().strftime("%Y-%m-%d %H:%M"),
             mode=settings.email_summarizer_mode,
+            provider=provider,
         )
 
         # WhatsApp auto-notification intentionally disabled.
@@ -682,7 +683,8 @@ async def run_summarizer(email: str, messages_to_process: list[dict]) -> None:
     except Exception as exc:
         logger.exception("EmailSummarizer | failed for %s: %s", email, exc)
         _notify(email, "⚠️ Email summarizer error", str(exc), is_error=True,
-                mode=settings.email_summarizer_mode)
+                mode=settings.email_summarizer_mode,
+                provider="Gmail" if is_gmail else "Outlook")
 
 
 def _notify(
@@ -694,6 +696,7 @@ def _notify(
     email_count: int = 0,
     timestamp: str = "",
     mode: str = "",
+    provider: str = "",
 ) -> None:
     publish(email, {
         "type": "agent_complete",
@@ -707,6 +710,7 @@ def _notify(
         "inclusion_rule": INCLUSION_RULE_SUMMARY,
         "exclusion_rule": EXCLUSION_RULE_SUMMARY,
         "mode": mode,
+        "provider": provider,
     })
 
 

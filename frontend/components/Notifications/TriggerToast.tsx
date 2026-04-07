@@ -11,6 +11,7 @@ import {
   TRIGGER_PREFIX_GMAIL,
   TRIGGER_PREFIX_GOOGLECAL,
   GMAIL_SEARCH_BASE_URL,
+  OUTLOOK_DRAFTS_URL,
 } from "@/lib/constants";
 
 interface Props {
@@ -62,8 +63,11 @@ function getStats(n: NotificationItem): { icon: string; label: string; value: st
     if (n.email_count)   s.push({ icon: "📧", label: "Scanned", value: `${n.email_count} email${n.email_count !== 1 ? "s" : ""}` });
     if (n.timestamp)     s.push({ icon: "🕐", label: "At",      value: n.timestamp });
     if (n.draft_subject) s.push({
-      icon: "📎", label: "Draft", value: "Open in Gmail →",
-      href: `${GMAIL_SEARCH_BASE_URL}/${encodeURIComponent(n.draft_subject)}`,
+      icon: "📎", label: "Draft",
+      value: n.provider === "Outlook" ? "Open in Outlook →" : "Open in Gmail →",
+      href: n.provider === "Outlook"
+        ? OUTLOOK_DRAFTS_URL
+        : `${GMAIL_SEARCH_BASE_URL}/${encodeURIComponent(n.draft_subject)}`,
     });
     return s;
   }

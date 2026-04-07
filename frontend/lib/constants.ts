@@ -117,6 +117,9 @@ export const KEY_ESCAPE = "Escape";
 /** Base URL for Gmail label/search deep-links */
 export const GMAIL_SEARCH_BASE_URL = "https://mail.google.com/mail/u/0/#search";
 
+/** Base URL for Outlook web drafts folder */
+export const OUTLOOK_DRAFTS_URL = "https://outlook.live.com/mail/0/drafts";
+
 // ── API paths ─────────────────────────────────────────────────────────────────
 
 /** Path prefix for the triggers SSE stream (appended with /{email}) */

@@ -11,6 +11,7 @@ import {
   NOTIFICATION_SNIPPET_PREVIEW_CHARS,
   TRIGGER_PREFIX_GMAIL,
   GMAIL_SEARCH_BASE_URL,
+  OUTLOOK_DRAFTS_URL,
   UNREAD_BADGE_MAX,
   UNREAD_BADGE_DISPLAY,
   KEY_ESCAPE,
@@ -342,13 +343,15 @@ function AgentCompleteDetail({ item }: { item: NotificationItem }) {
             <span>
               <span className="text-gray-700 font-medium">Draft saved: </span>
               <a
-                href={`${GMAIL_SEARCH_BASE_URL}/${encodeURIComponent(item.draft_subject)}`}
+                href={item.provider === "Outlook"
+                  ? OUTLOOK_DRAFTS_URL
+                  : `${GMAIL_SEARCH_BASE_URL}/${encodeURIComponent(item.draft_subject)}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-indigo-600 hover:underline"
                 onClick={(e) => e.stopPropagation()}
               >
-                Open in Gmail →
+                {item.provider === "Outlook" ? "Open in Outlook →" : "Open in Gmail →"}
               </a>
             </span>
           </div>

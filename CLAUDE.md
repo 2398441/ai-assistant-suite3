@@ -259,12 +259,13 @@ GET /api/triggers/stream/{email}  (frontend EventSource)
   - *Actionable Items*: `#` · Priority · Action Required · From · Sender Email · Subject
   - *Excluded Emails*: `#` · From · Subject · Reason Excluded (Gmail Category removed)
 - **Deduplication** — rows describing the same real-world task are merged; highest-priority row is kept.
-- **HTML rendering** — `_md_to_html()` is called before `GMAIL_CREATE_EMAIL_DRAFT`; `is_html: True` passed to Composio so Gmail renders tables correctly. `_COL_WIDTHS` dict assigns `%`-based widths per column header; `table-layout:fixed` + `word-break:break-word` enforce alignment.
+- **HTML rendering** — `_md_to_html()` is called before the draft tool (`GMAIL_CREATE_EMAIL_DRAFT` or `OUTLOOK_CREATE_DRAFT`); `is_html: True` / `content_type: "HTML"` passed to Composio so the provider renders tables correctly. `_COL_WIDTHS` dict assigns `%`-based widths per column header; `table-layout:fixed` + `word-break:break-word` enforce alignment.
 - **Pipe safety** — Claude is instructed to replace `|` in cell values with `/`; parser merges over-split rows back to the expected column count.
 - **Output ordering** — `_reorder_output(text)` post-processes Claude's response to enforce section order: `### Actionable Items` → `### Email Reference` → `### Additional Notes`. Any preamble/reasoning is appended last. Additional notes are written in plain language — internal step/pattern numbers are explicitly suppressed in the prompt.
 - **Email Count column** — Actionable Items table now includes an `Email Count` column; deduplicated rows show the count of merged source emails.
 - **Email Reference table** — replaces "Excluded Emails"; covers every scanned email (both ✅ Included and ❌ Excluded) with a Status and Reason column.
-- **Summary Statistics** — backend-appended table after Claude's output: emails scanned, lookback period, mode, inclusion rule, exclusion rule.
+- **Summary Statistics** — backend-appended table after Claude's output: emails scanned, lookback period, mode, provider, inclusion rule, exclusion rule.
+- **Provider-aware draft link** — `_notify()` includes `provider: "Gmail" | "Outlook"` in the SSE event. Frontend components (`NotificationDrawer`, `TriggerToast`) use this to render the correct link: Gmail → `https://mail.google.com/mail/u/0/#search/{subject}` ("Open in Gmail →"); Outlook → `https://outlook.live.com/mail/0/drafts` ("Open in Outlook →"). Constants: `GMAIL_SEARCH_BASE_URL`, `OUTLOOK_DRAFTS_URL` in `frontend/lib/constants.ts`.
 - **WA auto-send removed** — `send_whatsapp` is no longer called automatically from `email_summarizer.py` or `triggers.py`. WA is only sent via the "Send test" UI button or an explicit agent tool call at the user's request.
 - **WA summary** — sends up to 10 action rows (pipe-delimited lines), hard-capped at 1500 chars.
 - **Schedule & Meet (Stage 1)** — workspace/calendar agent always responds with a fillable code-block template (`Title / Date / Duration / Attendees / Agenda`) so the "Use this ↗" EditableBlock appears immediately. Default meeting duration is **30 minutes** across all agent prompts and quick actions.

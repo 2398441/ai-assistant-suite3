@@ -47,6 +47,7 @@ export function NotificationListener({ userEmail, onNotification }: Props) {
             inclusion_rule: data.inclusion_rule ?? "",
             exclusion_rule: data.exclusion_rule ?? "",
             mode: data.mode ?? "",
+            provider: data.provider || undefined,
           });
           return;
         }
