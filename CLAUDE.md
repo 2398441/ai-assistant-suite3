@@ -259,7 +259,7 @@ GET /api/triggers/stream/{email}  (frontend EventSource)
   - *Actionable Items*: `#` · Priority · Action Required · From · Sender Email · Subject
   - *Excluded Emails*: `#` · From · Subject · Reason Excluded (Gmail Category removed)
 - **Deduplication** — rows describing the same real-world task are merged; highest-priority row is kept.
-- **HTML rendering** — `_md_to_html()` is called before the draft tool (`GMAIL_CREATE_EMAIL_DRAFT` or `OUTLOOK_CREATE_DRAFT`); `is_html: True` / `content_type: "HTML"` passed to Composio so the provider renders tables correctly. `_COL_WIDTHS` dict assigns `%`-based widths per column header; `table-layout:fixed` + `word-break:break-word` enforce alignment.
+- **HTML rendering** — `_md_to_html()` is called before the draft tool (`GMAIL_CREATE_EMAIL_DRAFT` or `OUTLOOK_CREATE_DRAFT`); `is_html: True` passed to Composio for both Gmail and Outlook so the provider renders tables correctly. `_COL_WIDTHS` dict assigns `%`-based widths per column header; `table-layout:fixed` + `word-break:break-word` enforce alignment.
 - **Pipe safety** — Claude is instructed to replace `|` in cell values with `/`; parser merges over-split rows back to the expected column count.
 - **Output ordering** — `_reorder_output(text)` post-processes Claude's response to enforce section order: `### Actionable Items` → `### Email Reference` → `### Additional Notes`. Any preamble/reasoning is appended last. Additional notes are written in plain language — internal step/pattern numbers are explicitly suppressed in the prompt.
 - **Email Count column** — Actionable Items table now includes an `Email Count` column; deduplicated rows show the count of merged source emails.

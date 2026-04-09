@@ -648,7 +648,7 @@ async def run_summarizer(email: str, messages_to_process: list[dict]) -> None:
             draft_input = {
                 "subject": subject,
                 "body": draft_body,
-                "content_type": "HTML",
+                "is_html": True,
             }
 
         await asyncio.to_thread(
