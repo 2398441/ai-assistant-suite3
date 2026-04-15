@@ -117,8 +117,17 @@ export const KEY_ESCAPE = "Escape";
 /** Base URL for Gmail label/search deep-links */
 export const GMAIL_SEARCH_BASE_URL = "https://mail.google.com/mail/u/0/#search";
 
-/** Base URL for Outlook web drafts folder */
+/** Base URL for Outlook consumer draft deep-link (append /{draftId}) */
+export const OUTLOOK_DRAFT_BASE_URL = "https://outlook.live.com/mail/0/drafts/id";
+
+/** Fallback: generic Outlook consumer drafts folder */
 export const OUTLOOK_DRAFTS_URL = "https://outlook.live.com/mail/0/drafts";
+
+/** Base URL for Microsoft 365 / SSO draft deep-link (append /{draftId}) */
+export const OUTLOOK_M365_DRAFT_BASE_URL = "https://outlook.cloud.microsoft/mail/drafts/id";
+
+/** Fallback: generic Microsoft 365 drafts folder */
+export const OUTLOOK_M365_DRAFTS_URL = "https://outlook.cloud.microsoft/mail/drafts?deeplink=mail%2F0%2Fdrafts";
 
 // ── API paths ─────────────────────────────────────────────────────────────────
 

@@ -19,7 +19,8 @@ export interface NotificationItem {
   inclusion_rule?: string;
   exclusion_rule?: string;
   mode?: string;
-  provider?: "Gmail" | "Outlook";
+  provider?: "Gmail" | "Outlook" | "Outlook365";
+  draft_id?: string;
 
   // trigger fields
   trigger_name?: string;

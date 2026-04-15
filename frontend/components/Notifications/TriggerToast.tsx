@@ -11,7 +11,10 @@ import {
   TRIGGER_PREFIX_GMAIL,
   TRIGGER_PREFIX_GOOGLECAL,
   GMAIL_SEARCH_BASE_URL,
+  OUTLOOK_DRAFT_BASE_URL,
   OUTLOOK_DRAFTS_URL,
+  OUTLOOK_M365_DRAFT_BASE_URL,
+  OUTLOOK_M365_DRAFTS_URL,
 } from "@/lib/constants";
 
 interface Props {
@@ -62,13 +65,25 @@ function getStats(n: NotificationItem): { icon: string; label: string; value: st
     const s: { icon: string; label: string; value: string; href?: string }[] = [];
     if (n.email_count)   s.push({ icon: "📧", label: "Scanned", value: `${n.email_count} email${n.email_count !== 1 ? "s" : ""}` });
     if (n.timestamp)     s.push({ icon: "🕐", label: "At",      value: n.timestamp });
-    if (n.draft_subject) s.push({
-      icon: "📎", label: "Draft",
-      value: n.provider === "Outlook" ? "Open in Outlook →" : "Open in Gmail →",
-      href: n.provider === "Outlook"
-        ? OUTLOOK_DRAFTS_URL
-        : `${GMAIL_SEARCH_BASE_URL}/${encodeURIComponent(n.draft_subject)}`,
-    });
+    if (n.draft_subject) {
+      let href: string;
+      if (n.provider === "Outlook") {
+        href = n.draft_id
+          ? `${OUTLOOK_DRAFT_BASE_URL}/${encodeURIComponent(n.draft_id)}`
+          : OUTLOOK_DRAFTS_URL;
+      } else if (n.provider === "Outlook365") {
+        href = n.draft_id
+          ? `${OUTLOOK_M365_DRAFT_BASE_URL}/${encodeURIComponent(n.draft_id)}`
+          : OUTLOOK_M365_DRAFTS_URL;
+      } else {
+        href = `${GMAIL_SEARCH_BASE_URL}/${encodeURIComponent(n.draft_subject)}`;
+      }
+      s.push({
+        icon: "📎", label: "Draft",
+        value: (n.provider === "Outlook" || n.provider === "Outlook365") ? "Open in Outlook →" : "Open in Gmail →",
+        href,
+      });
+    }
     return s;
   }
   const p = n.payload ?? {};

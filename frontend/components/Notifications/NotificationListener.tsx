@@ -48,6 +48,7 @@ export function NotificationListener({ userEmail, onNotification }: Props) {
             exclusion_rule: data.exclusion_rule ?? "",
             mode: data.mode ?? "",
             provider: data.provider || undefined,
+            draft_id: data.draft_id || undefined,
           });
           return;
         }

@@ -89,6 +89,20 @@ def _is_gmail(email: str) -> bool:
     return domain in ("gmail.com", "googlemail.com")
 
 
+_CONSUMER_OUTLOOK_DOMAINS = frozenset((
+    "outlook.com", "hotmail.com", "live.com", "msn.com",
+    "hotmail.co.uk", "hotmail.fr", "hotmail.de", "hotmail.it",
+    "live.co.uk", "live.fr", "live.de", "live.nl",
+    "outlook.co.uk", "outlook.fr", "outlook.de",
+))
+
+
+def _outlook_provider(email: str) -> str:
+    """Return 'Outlook' for consumer Microsoft domains, 'Outlook365' for corporate/SSO."""
+    domain = email.rsplit("@", 1)[-1].lower()
+    return "Outlook" if domain in _CONSUMER_OUTLOOK_DOMAINS else "Outlook365"
+
+
 def _extract_messages(raw_result: str) -> list[dict]:
     """Parse the Composio tool result into a list of message dicts."""
     data = json.loads(raw_result)
@@ -553,7 +567,7 @@ async def run_summarizer(email: str, messages_to_process: list[dict]) -> None:
     user_id = email_to_user_id(email)
     n = len(messages_to_process)
     is_gmail = _is_gmail(email)
-    provider = "Gmail" if is_gmail else "Outlook"
+    provider = "Gmail" if is_gmail else _outlook_provider(email)
     logger.info("EmailSummarizer | processing %d email(s) for %s (%s)", n, email, provider)
 
     # Select provider-specific prompt, formatter, and draft tool
@@ -651,12 +665,21 @@ async def run_summarizer(email: str, messages_to_process: list[dict]) -> None:
                 "is_html": True,
             }
 
-        await asyncio.to_thread(
+        draft_result_raw = await asyncio.to_thread(
             execute_tool,
             user_id=user_id,
             tool_name=draft_tool,
             tool_input=draft_input,
         )
+
+        # Extract draft ID from the Composio response (Microsoft Graph returns 'id')
+        draft_id = ""
+        try:
+            draft_data = json.loads(draft_result_raw)
+            if isinstance(draft_data, dict):
+                draft_id = draft_data.get("id", "")
+        except (json.JSONDecodeError, TypeError):
+            pass
 
         # 4. In smart mode, record the processed IDs
         if settings.email_summarizer_mode == "smart":
@@ -664,12 +687,13 @@ async def run_summarizer(email: str, messages_to_process: list[dict]) -> None:
             if ids:
                 mark_ids_processed(email, ids)
 
-        logger.info("EmailSummarizer | completed for %s (draft: %s)", email, subject)
+        logger.info("EmailSummarizer | completed for %s (draft: %s, draft_id: %s)", email, subject, draft_id or "n/a")
         _notify(
             email,
             "📋 Action items ready",
             action_items,
             draft_subject=subject,
+            draft_id=draft_id,
             email_count=len(messages_to_process),
             timestamp=datetime.now().strftime("%Y-%m-%d %H:%M"),
             mode=settings.email_summarizer_mode,
@@ -684,7 +708,7 @@ async def run_summarizer(email: str, messages_to_process: list[dict]) -> None:
         logger.exception("EmailSummarizer | failed for %s: %s", email, exc)
         _notify(email, "⚠️ Email summarizer error", str(exc), is_error=True,
                 mode=settings.email_summarizer_mode,
-                provider="Gmail" if is_gmail else "Outlook")
+                provider=provider)
 
 
 def _notify(
@@ -692,6 +716,7 @@ def _notify(
     title: str,
     body: str,
     draft_subject: str = "",
+    draft_id: str = "",
     is_error: bool = False,
     email_count: int = 0,
     timestamp: str = "",
@@ -704,6 +729,7 @@ def _notify(
         "title": title,
         "body": body,
         "draft_subject": draft_subject,
+        "draft_id": draft_id,
         "is_error": is_error,
         "email_count": email_count,
         "timestamp": timestamp,
@@ -746,7 +772,7 @@ async def _fetch_and_run(email: str, mode: str) -> None:
     await asyncio.sleep(20)
     user_id = email_to_user_id(email)
     is_gmail = _is_gmail(email)
-    provider = "Gmail" if is_gmail else "Outlook"
+    provider = "Gmail" if is_gmail else _outlook_provider(email)
 
     # Select provider-specific fetch tool and input
     if is_gmail:

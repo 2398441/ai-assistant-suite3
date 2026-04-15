@@ -11,7 +11,10 @@ import {
   NOTIFICATION_SNIPPET_PREVIEW_CHARS,
   TRIGGER_PREFIX_GMAIL,
   GMAIL_SEARCH_BASE_URL,
+  OUTLOOK_DRAFT_BASE_URL,
   OUTLOOK_DRAFTS_URL,
+  OUTLOOK_M365_DRAFT_BASE_URL,
+  OUTLOOK_M365_DRAFTS_URL,
   UNREAD_BADGE_MAX,
   UNREAD_BADGE_DISPLAY,
   KEY_ESCAPE,
@@ -343,15 +346,13 @@ function AgentCompleteDetail({ item }: { item: NotificationItem }) {
             <span>
               <span className="text-gray-700 font-medium">Draft saved: </span>
               <a
-                href={item.provider === "Outlook"
-                  ? OUTLOOK_DRAFTS_URL
-                  : `${GMAIL_SEARCH_BASE_URL}/${encodeURIComponent(item.draft_subject)}`}
+                href={draftHref(item)}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-indigo-600 hover:underline"
                 onClick={(e) => e.stopPropagation()}
               >
-                {item.provider === "Outlook" ? "Open in Outlook →" : "Open in Gmail →"}
+                {draftLabel(item)}
               </a>
             </span>
           </div>
@@ -393,6 +394,25 @@ function MetaRow({ icon, label, value }: { icon: string; label: string; value: s
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+function draftHref(item: NotificationItem): string {
+  if (item.provider === "Outlook") {
+    return item.draft_id
+      ? `${OUTLOOK_DRAFT_BASE_URL}/${encodeURIComponent(item.draft_id)}`
+      : OUTLOOK_DRAFTS_URL;
+  }
+  if (item.provider === "Outlook365") {
+    return item.draft_id
+      ? `${OUTLOOK_M365_DRAFT_BASE_URL}/${encodeURIComponent(item.draft_id)}`
+      : OUTLOOK_M365_DRAFTS_URL;
+  }
+  return `${GMAIL_SEARCH_BASE_URL}/${encodeURIComponent(item.draft_subject ?? "")}`;
+}
+
+function draftLabel(item: NotificationItem): string {
+  if (item.provider === "Outlook" || item.provider === "Outlook365") return "Open in Outlook →";
+  return "Open in Gmail →";
+}
 
 function getPreview(item: NotificationItem): string {
   if (item.type === "agent_complete") {

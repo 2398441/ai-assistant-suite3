@@ -591,7 +591,7 @@ Triggered on every user login (configurable via `EMAIL_SUMMARIZER_MODE`) for bot
 6. Reorders Claude's output to guarantee section order: **Actionable Items → Email Reference → Additional Notes**
 7. Appends a backend-generated **Summary Statistics** table (emails scanned, lookback period, mode, provider, inclusion/exclusion rules)
 8. Saves result as an HTML-formatted draft in the user's provider (`GMAIL_CREATE_EMAIL_DRAFT` or `OUTLOOK_CREATE_DRAFT`)
-9. Publishes an `agent_complete` event (includes `provider: "Gmail" | "Outlook"`) — replaces the processing indicator with real results; the draft link opens the correct mailbox ("Open in Gmail →" or "Open in Outlook →")
+9. Publishes an `agent_complete` event (includes `provider`: `"Gmail"` | `"Outlook"` | `"Outlook365"`, and `draft_id` extracted from the Composio response) — replaces the processing indicator with real results; the draft link is a dynamic deep-link to the specific draft: Gmail → search by subject; Outlook consumer (`outlook.com`, `hotmail.com`, etc.) → `outlook.live.com/.../drafts/id/{draft_id}`; Outlook365 corporate/SSO → `outlook.cloud.microsoft/.../drafts/id/{draft_id}`
 
 On page reload, stale `is_processing` notifications are filtered out of localStorage automatically (they can never resolve after a reload).
 
